@@ -1,5 +1,4 @@
 #include "searxng.h"
-#include "dirs.h"
 #include "subprocess.h"
 #include "str.h"
 #include "cJSON.h"
@@ -71,15 +70,25 @@ static char *searxng_base_url(const char *url) {
   return xstrdup(url);
 }
 
+static const char *s_searxng_config_dir = NULL;
+
+void searxng_set_config_dir(const char *config_dir) {
+  s_searxng_config_dir = config_dir;
+}
+
 /* Ensure the persistent SearXNG config directory exists
  * with a settings.yml that enables JSON format. */
 static const char *ensure_searxng_config_dir(void) {
   static char cfg_dir[NASH_PATH_MAX] = {0};
   if (cfg_dir[0]) return cfg_dir;
 
-  nash_dirs_t *d = nash_dirs_resolve(NULL);
-  snprintf(cfg_dir, sizeof(cfg_dir), "%s/searxng", d->config_dir);
-  nash_dirs_free(d);
+  if (s_searxng_config_dir)
+    snprintf(cfg_dir, sizeof(cfg_dir), "%s/searxng", s_searxng_config_dir);
+  else {
+    const char *home = getenv("HOME");
+    if (!home) home = "/tmp";
+    snprintf(cfg_dir, sizeof(cfg_dir), "%s/.nash/searxng", home);
+  }
 
   mkdir_p(cfg_dir, 0755);
 

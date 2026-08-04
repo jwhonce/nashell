@@ -26,7 +26,7 @@ typedef struct {
  *   2. ~/.nash/config.toml
  *
  * Writes the found (or default) path into config_path_out (up to out_sz bytes).
- * Returns 0 on success, -1 on failure (HOME not set). */
+ * Always returns 0 (falls back to /tmp if HOME is unset). */
 int nash_dirs_find_config(char *config_path_out, size_t out_sz);
 
 /* Resolve all directories.

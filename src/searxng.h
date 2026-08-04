@@ -17,6 +17,10 @@ int ensure_searxng(const char *searxng_url);
 char *searxng_search(const char *searxng_url, const char *query,
                      int *out_count, long timeout);
 
+/* Set the config directory for SearXNG settings (XDG support).
+ * Call once at startup. If not called, falls back to ~/.nash/searxng. */
+void searxng_set_config_dir(const char *config_dir);
+
 /* Tear down auto-started SearXNG container (called on nash exit). */
 void web_search_cleanup(void);
 

@@ -315,7 +315,7 @@ char *sessions_base_dir(const char *state_dir, const char *workspace) {
 }
 
 /* Create a new session directory with epoch-based name.
- * state_dir: base for sessions. cache_dir: base for temp files (NULL = /tmp/.nash). */
+ * state_dir: base directory for session state. */
 char *create_session_dir(const char *state_dir, const char *workspace) {
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);

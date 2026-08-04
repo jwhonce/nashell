@@ -737,6 +737,7 @@ int main(int argc, char **argv) {
 
   /* Resolve all directories (XDG or legacy) */
   nash_dirs_t *dirs = nash_dirs_resolve(cfg->data_dir);
+  searxng_set_config_dir(dirs->config_dir);
 
   /* Create models/ directory for per-model profiles (config = user-authored) */
   {
@@ -1122,7 +1123,7 @@ int main(int argc, char **argv) {
 
     /* Also load workspace sessions into the same index */
     if (cfg->workspace && cfg->workspace[0] && session_idx) {
-      char *ws_sessions = sessions_base_dir(dirs->config_dir, cfg->workspace);
+      char *ws_sessions = sessions_base_dir(dirs->state_dir, cfg->workspace);
       session_index_load_dir(session_idx, ws_sessions);
       free(ws_sessions);
     }
@@ -1187,7 +1188,7 @@ int main(int argc, char **argv) {
     if (ws && ws->workspace) {
       snprintf(dream_ts_path, sizeof(dream_ts_path),
                "%s/workspaces/%s/.memory/.last_dream",
-               dirs->config_dir, cfg->workspace);
+               dirs->data_dir, cfg->workspace);
     } else {
       snprintf(dream_ts_path, sizeof(dream_ts_path),
                "%s/memory/.last_dream", dirs->data_dir);
@@ -1430,7 +1431,7 @@ int main(int argc, char **argv) {
 
     playbook_args_t pargs = {
       .playbook = pb,
-      .nash_dir = dirs->data_dir,
+      .dirs = dirs,
       .store = shared_store,
       .memory = memory,
       .cfg = cfg,
@@ -1531,7 +1532,7 @@ int main(int argc, char **argv) {
     const char *mbox = NULL;
     if (mailbox_init(dirs->state_dir, mbox_dir, sizeof(mbox_dir)) == 0)
       mbox = mbox_dir;
-    int n_fail = agent_run_due(dirs->state_dir, shared_store, cfg, provider,
+    int n_fail = agent_run_due(dirs, shared_store, cfg, provider,
                                server_model, agent_target_id,
                                agent_arguments,
                                &shutdown_requested, mbox);
@@ -1651,7 +1652,7 @@ int main(int argc, char **argv) {
       s->name = cfg->workspace ? xstrdup(cfg->workspace) : NULL;
       s->ws = ws; /* reuse the ws already created at L655 */
       s->mem = ws ? ws->global : NULL;
-      s->session_dir = create_session_dir(dirs->config_dir, cfg->workspace);
+      s->session_dir = create_session_dir(dirs->state_dir, cfg->workspace);
       s->journal = journal_new(s->session_dir);
       session_init_tools(&s->tools, shared_store, s->journal, s->mem,
                          s->ws, s->session_dir, cfg, provider);
@@ -1708,7 +1709,7 @@ int main(int argc, char **argv) {
         snprintf(cmd_chk, sizeof(cmd_chk), "%s/inbox/cmd_new", mbox_dir);
         if (access(cmd_chk, F_OK) != 0) {
           /* No command pending -- check for due agents */
-          agent_run_due(dirs->state_dir, shared_store, cfg,
+          agent_run_due(dirs, shared_store, cfg,
                         provider, server_model,
                         NULL, NULL,
                         &shutdown_requested, mbox_dir);
@@ -1934,7 +1935,7 @@ int main(int argc, char **argv) {
     journal_t *journal;
     if (!session_dir) {
       /* Lazy session: directory created on first journal_append */
-      journal = journal_new_lazy(dirs->config_dir, cfg->workspace);
+      journal = journal_new_lazy(dirs->state_dir, cfg->workspace);
       lazy_session = 1;
     } else {
       journal = journal_new(session_dir);
@@ -2033,7 +2034,7 @@ int main(int argc, char **argv) {
     /* Interactive TUI needs session_dir immediately for journal display,
          * so always create it eagerly (lazy sessions break TUI rendering). */
     if (!session_dir) {
-      session_dir = create_session_dir(dirs->config_dir, cfg->workspace);
+      session_dir = create_session_dir(dirs->state_dir, cfg->workspace);
     }
     journal_t *journal = journal_new(session_dir);
     tool_ctx_t tools;
@@ -2148,14 +2149,14 @@ int main(int argc, char **argv) {
           int dur = (int)(time(NULL) - pargs_tui.agent_start_time);
           const char *status = pargs_tui.playbook_ok ? "ok" : "fail";
           agent_entry_t tmp_agent = {.id = pargs_tui.agent_id};
-          agent_history_append(pargs_tui.nash_dir, &tmp_agent,
+          agent_history_append(pargs_tui.dirs->state_dir, &tmp_agent,
                                dur, status, NULL);
-          agent_queue_update_run(pargs_tui.nash_dir,
+          agent_queue_update_run(pargs_tui.dirs->state_dir,
                                  pargs_tui.agent_id,
                                  pargs_tui.agent_start_time,
                                  dur, status);
           if (pargs_tui.last_session_dir)
-            agent_save_result(pargs_tui.nash_dir,
+            agent_save_result(pargs_tui.dirs->state_dir,
                               pargs_tui.agent_id,
                               pargs_tui.last_session_dir);
           free(pargs_tui.agent_id);

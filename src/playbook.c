@@ -828,14 +828,14 @@ void *playbook_worker(void *arg) {
   /* Change 5: Load persisted scratchpad from previous runs */
   char state_dir[NASH_PATH_MAX];
   snprintf(state_dir, sizeof(state_dir), "%s/playbooks/.state/%s",
-           pa->nash_dir, pb->name);
+           pa->dirs->state_dir, pb->name);
   scratchpad_load(&shared_scratch, state_dir);
 
   char *prev_result = NULL;
   char *shared_session_dir = NULL;
 
   if (pb->session_mode == PB_SESSION_SHARED) {
-    shared_session_dir = create_session_dir(pa->nash_dir, pa->workspace_override ? pa->workspace_override : pa->cfg->workspace);
+    shared_session_dir = create_session_dir(pa->dirs->state_dir, pa->workspace_override ? pa->workspace_override : pa->cfg->workspace);
   }
 
   int playbook_ok = 1;
@@ -868,7 +868,7 @@ void *playbook_worker(void *arg) {
 
   /* ── Run log: append-only JSONL tracking orchestration ── */
   char runs_dir[NASH_PATH_MAX];
-  snprintf(runs_dir, sizeof(runs_dir), "%s/runs", pa->nash_dir);
+  snprintf(runs_dir, sizeof(runs_dir), "%s/runs", pa->dirs->state_dir);
   mkdir(runs_dir, 0755);
 
   struct timespec run_tp;
@@ -950,7 +950,7 @@ void *playbook_worker(void *arg) {
       char *prompt = playbook_expand(pb, pb->passes[pass].prompt_template,
                                      pass, prev_result,
                                      mdir, model,
-                                     NULL, pa->nash_dir);
+                                     NULL, pa->dirs->state_dir);
 
       /* playbook_expand returns NULL when required {{argN}} variables
          * are missing — abort the playbook with a clear error. */
@@ -970,7 +970,7 @@ void *playbook_worker(void *arg) {
       /* Create session */
       char *pass_dir;
       if (pb->session_mode == PB_SESSION_PER_PASS) {
-        pass_dir = create_session_dir(pa->nash_dir, pa->workspace_override ? pa->workspace_override : pa->cfg->workspace);
+        pass_dir = create_session_dir(pa->dirs->state_dir, pa->workspace_override ? pa->workspace_override : pa->cfg->workspace);
       } else {
         pass_dir = xstrdup(shared_session_dir);
       }
@@ -1066,7 +1066,7 @@ void *playbook_worker(void *arg) {
         char *safe_prev = shell_escape_value(prev_result);
         char *expanded_cmd = playbook_expand(pb,
                                              pb->passes[pass].command ? pb->passes[pass].command : "",
-                                             pass, safe_prev, mdir, model, NULL, pa->nash_dir);
+                                             pass, safe_prev, mdir, model, NULL, pa->dirs->state_dir);
         free(safe_prev);
         if (expanded_cmd && expanded_cmd[0]) {
           if (pa->ui) {
@@ -1212,7 +1212,7 @@ void *playbook_worker(void *arg) {
           char *safe_prev = shell_escape_value(prev_result);
           char *expanded_cmd = playbook_expand(pb,
                                                pb->passes[pass].command ? pb->passes[pass].command : "",
-                                               pass, safe_prev, mdir, model, NULL, pa->nash_dir);
+                                               pass, safe_prev, mdir, model, NULL, pa->dirs->state_dir);
           free(safe_prev);
           if (expanded_cmd && expanded_cmd[0]) {
             char popen_cmd[NASH_PATH_MAX * 2 + 8];
@@ -1422,7 +1422,7 @@ void *playbook_worker(void *arg) {
     /* Create state directory (mkdir -p equivalent) */
     char state_parent[NASH_PATH_MAX];
     snprintf(state_parent, sizeof(state_parent), "%s/playbooks/.state",
-             pa->nash_dir);
+             pa->dirs->state_dir);
     mkdir(state_parent, 0755);
     mkdir(state_dir, 0755);
     scratchpad_save(&shared_scratch, state_dir);

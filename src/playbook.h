@@ -4,6 +4,7 @@
 #include "react.h"
 #include "tools.h"
 #include "config.h"
+#include "dirs.h"
 #include "ui_state.h"
 #include <stdatomic.h>
 
@@ -105,7 +106,7 @@ typedef struct {
 
 typedef struct {
   playbook_t *playbook;
-  char *nash_dir;
+  const nash_dirs_t *dirs;
   store_t *store;
   memory_t *memory;
   memory_t *ws_memory; /* workspace memory — NULL if no workspace */

@@ -1081,13 +1081,13 @@ playbook_t *agent_prepare_playbook(const agent_entry_t *a,
 
 /* ── Agent execution ──────────────────────────────────── */
 
-int agent_execute(agent_queue_t *q, const char *nash_dir,
+int agent_execute(agent_queue_t *q, const nash_dirs_t *dirs,
                   store_t *shared_store, config_t *cfg,
                   provider_t *provider, const char *server_model,
                   const char *agent_id, const char *arguments,
                   volatile sig_atomic_t *shutdown_flag,
                   const char *mailbox_dir) {
-  if (!q || !nash_dir) return -1;
+  if (!q || !dirs) return -1;
 
   int n_ok = 0, n_fail = 0;
 
@@ -1161,7 +1161,7 @@ int agent_execute(agent_queue_t *q, const char *nash_dir,
     }
 
     /* Create workspace for this agent */
-    workspace_t *agent_ws = workspace_new(nash_dir, a->workspace_name,
+    workspace_t *agent_ws = workspace_new(dirs->data_dir, a->workspace_name,
                                           0, cfg->workspace_global_weight);
     /* Initialize recall config + embeddings on agent workspace */
     if (agent_ws) {
@@ -1197,7 +1197,7 @@ int agent_execute(agent_queue_t *q, const char *nash_dir,
 
     playbook_args_t pargs = {
       .playbook = pb,
-      .nash_dir = (char *)nash_dir,
+      .dirs = dirs,
       .store = shared_store,
       .memory = agent_ws ? agent_ws->global : NULL,
       .ws_memory = agent_ws ? agent_ws->workspace : NULL,
@@ -1236,11 +1236,11 @@ int agent_execute(agent_queue_t *q, const char *nash_dir,
     str_replace(&a->last_status, status);
     a->next_due = agent_next_occurrence(&a->schedule, a->last_run);
 
-    agent_history_append(nash_dir, a, dur, status, NULL);
+    agent_history_append(dirs->state_dir, a, dur, status, NULL);
 
     /* Symlink latest.md -> session's result.md for `/agent result` */
     if (pargs.last_session_dir)
-      agent_save_result(nash_dir, a->id, pargs.last_session_dir);
+      agent_save_result(dirs->state_dir, a->id, pargs.last_session_dir);
 
     /* Route result through mailbox so bridge threads deliver it.
          * Confidential agents suppress bridge delivery entirely. */
@@ -1297,24 +1297,24 @@ int agent_execute(agent_queue_t *q, const char *nash_dir,
 
 /* ── Unified scan + schedule + execute + save ─────────── */
 
-int agent_run_due(const char *nash_dir, store_t *shared_store, config_t *cfg,
+int agent_run_due(const nash_dirs_t *dirs, store_t *shared_store, config_t *cfg,
                   provider_t *provider, const char *server_model,
                   const char *agent_id, const char *arguments,
                   volatile sig_atomic_t *shutdown_flag,
                   const char *mailbox_dir) {
-  agent_queue_t *q = agent_scan(nash_dir);
+  agent_queue_t *q = agent_scan(dirs->data_dir);
   if (!q) {
     fprintf(stderr, "[agent] error: scan failed\n");
     return -1;
   }
-  agent_queue_load(q, nash_dir);
+  agent_queue_load(q, dirs->state_dir);
   agent_queue_schedule(q, time(NULL));
 
-  int n_fail = agent_execute(q, nash_dir, shared_store, cfg,
+  int n_fail = agent_execute(q, dirs, shared_store, cfg,
                              provider, server_model,
                              agent_id, arguments,
                              shutdown_flag, mailbox_dir);
-  agent_queue_save(q, nash_dir);
+  agent_queue_save(q, dirs->state_dir);
   agent_queue_free(q);
   return n_fail;
 }

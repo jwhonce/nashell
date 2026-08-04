@@ -282,7 +282,7 @@ static int cmd_agents_run(command_ctx_t *ctx, const char *id) {
 
   *ctx->pargs = (playbook_args_t){
     .playbook = pb,
-    .nash_dir = (char *)ctx->dirs->data_dir,
+    .dirs = ctx->dirs,
     .store = ctx->store,
     .memory = agent_ws ? agent_ws->global : ctx->memory,
     .ws_memory = agent_ws ? agent_ws->workspace : NULL,

@@ -4,6 +4,7 @@
 #include "playbook.h"
 #include "workspace.h"
 #include "config.h"
+#include "dirs.h"
 #include <time.h>
 #include <signal.h>
 
@@ -129,7 +130,7 @@ void agent_save_result(const char *nash_dir, const char *agent_id,
  * Returns number of failures.
  * If mailbox_dir is non-NULL, results are written to the mailbox outbox
  * so that bridge threads (Telegram, Matrix) can deliver them. */
-int agent_execute(agent_queue_t *q, const char *nash_dir,
+int agent_execute(agent_queue_t *q, const nash_dirs_t *dirs,
                   store_t *shared_store, config_t *cfg,
                   provider_t *provider, const char *server_model,
                   const char *agent_id, const char *arguments,
@@ -138,7 +139,7 @@ int agent_execute(agent_queue_t *q, const char *nash_dir,
 
 /* Unified scan + load + schedule + execute + save + free.
  * Convenience wrapper for CLI and daemon agent execution paths. */
-int agent_run_due(const char *nash_dir, store_t *shared_store, config_t *cfg,
+int agent_run_due(const nash_dirs_t *dirs, store_t *shared_store, config_t *cfg,
                   provider_t *provider, const char *server_model,
                   const char *agent_id, const char *arguments,
                   volatile sig_atomic_t *shutdown_flag,

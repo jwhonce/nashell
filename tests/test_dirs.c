@@ -35,14 +35,22 @@ static void test_override_sets_all_dirs(void) {
 
 static void test_override_empty_string_is_not_override(void) {
   unset_xdg_vars();
+  char *tmp = make_test_dir();
 
-  /* With empty string, should NOT treat as override */
+  char old_home[NASH_PATH_MAX];
+  snprintf(old_home, sizeof(old_home), "%s", getenv("HOME") ? getenv("HOME") : "/tmp");
+  setenv("HOME", tmp, 1);
+
+  /* Empty string should NOT be treated as an override path */
   nash_dirs_t *d = nash_dirs_resolve("");
   ASSERT_NOT_NULL(d);
-  /* xdg_mode depends on whether ~/.nash/config.toml exists,
-     but it should NOT be an override (all dirs same) scenario
-     unless legacy mode detected */
+  ASSERT(strcmp(d->config_dir, "") != 0);
+  ASSERT(d->config_dir[0] != '\0');
+
   nash_dirs_free(d);
+  setenv("HOME", old_home, 1);
+  rm_rf(tmp);
+  free(tmp);
 }
 
 static void test_legacy_mode_when_dot_nash_exists(void) {

@@ -118,7 +118,7 @@ static int cmd_dream(command_ctx_t *ctx) {
 
   *ctx->pargs = (playbook_args_t){
     .playbook = dream_pb,
-    .nash_dir = (char *)ctx->dirs->data_dir,
+    .dirs = ctx->dirs,
     .store = ctx->store,
     .memory = ctx->memory,
     .ws_memory = ctx->ws ? ctx->ws->workspace : NULL,
@@ -200,7 +200,7 @@ static int cmd_play(command_ctx_t *ctx, const char *arg) {
 
   *ctx->pargs = (playbook_args_t){
     .playbook = pb,
-    .nash_dir = (char *)ctx->dirs->data_dir,
+    .dirs = ctx->dirs,
     .store = ctx->store,
     .memory = ctx->memory,
     .ws_memory = ctx->ws ? ctx->ws->workspace : NULL,
