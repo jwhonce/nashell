@@ -699,24 +699,23 @@ void ui_state_search(ui_state_t *ui, const char *query) {
   }
 
   /* Build sessions directory path */
-  const char *nash_dir = ui->nash_dir;
-  if (!nash_dir) {
-    /* Derive from session_dir: ~/.nash/sessions/XXX → ~/.nash */
+  const char *state_dir = ui->dirs ? ui->dirs->state_dir : NULL;
+  if (!state_dir) {
+    /* Derive from session_dir: .../sessions/XXX → parent
+     * NB: static buffer — not thread-safe. Acceptable because
+     * this code path is only reached from the single TUI thread. */
     if (!ui->session_dir) return;
-    /* NB: static buffer — not thread-safe.  Acceptable because
-         * this code path is only reached from the single TUI thread. */
     static char derived[NASH_PATH_MAX];
     snprintf(derived, sizeof(derived), "%s", ui->session_dir);
-    /* Go up two levels: sessions/XXX → sessions → nash_dir */
     char *slash = strrchr(derived, '/');
     if (slash) *slash = '\0';
     slash = strrchr(derived, '/');
     if (slash) *slash = '\0';
-    nash_dir = derived;
+    state_dir = derived;
   }
 
-  char sessions_dir[NASH_PATH_MAX + 16];
-  snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", nash_dir);
+  char sessions_dir[NASH_PATH_MAX];
+  snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", state_dir);
 
   /* Collect session directories (full paths) from global + workspace */
   char **session_dirs = NULL;
@@ -727,7 +726,7 @@ void ui_state_search(ui_state_t *ui, const char *query) {
 
   /* Also collect from workspace sessions directory */
   if (ui->workspace_name && ui->workspace_name[0]) {
-    char *ws_sessions = sessions_base_dir(nash_dir, ui->workspace_name);
+    char *ws_sessions = sessions_base_dir(state_dir, ui->workspace_name);
     collect_session_dirs(ws_sessions, &session_dirs, &session_count, &session_cap);
     free(ws_sessions);
   }

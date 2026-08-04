@@ -13,6 +13,7 @@
 #include "memory.h"
 #include "workspace.h"
 #include "playbook.h"
+#include "dirs.h"
 
 /* Inference state — what the worker thread is doing.
  * Used as an atomic tri-state flag (0 = idle, nonzero = busy). */
@@ -26,7 +27,7 @@ enum infer_state {
  * Bundles all mutable/shared session state needed by commands. */
 typedef struct {
   char *session_dir;
-  const char *nash_dir;
+  const nash_dirs_t *dirs;
   tool_ctx_t *tools;
   react_ctx_t *react;
   ui_state_t *ui;

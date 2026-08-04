@@ -32,6 +32,7 @@ tests/test_semantic_scoring
 tests/test_breadcrumbs
 tests/test_optimizer
 tests/test_reflection
+tests/test_dirs
 scripts/perception*
 scripts/t
 
@@ -54,3 +55,4 @@ fixed_point_sin.c
 .vscode/
 .idea/
 __pycache__/
+CLAUDE.md

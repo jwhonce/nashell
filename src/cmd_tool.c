@@ -387,14 +387,14 @@ static int cmd_tool_save(command_ctx_t *ctx, const char *profile) {
     }
   }
 
-  if (!ensure_profiles_dir(ctx->nash_dir)) {
+  if (!ensure_profiles_dir(ctx->dirs->data_dir)) {
     ui_locked_set_status(ui, STATUS_ERROR, "/tool save: cannot create profiles directory");
     return CMD_CONTINUE;
   }
 
   char path[NASH_PATH_MAX];
   char dir[NASH_PATH_MAX];
-  tool_profiles_dir(ctx->nash_dir, dir, sizeof(dir));
+  tool_profiles_dir(ctx->dirs->data_dir, dir, sizeof(dir));
   if (snprintf(path, sizeof(path), "%s/%s", dir, profile) >= (int)sizeof(path)) {
     ui_locked_set_status(ui, STATUS_ERROR, "/tool save: path too long");
     return CMD_CONTINUE;
@@ -429,7 +429,7 @@ static int cmd_tool_load(command_ctx_t *ctx, const char *profile) {
   if (!profile || !profile[0]) {
     /* List available profiles */
     char dir[NASH_PATH_MAX];
-    tool_profiles_dir(ctx->nash_dir, dir, sizeof(dir));
+    tool_profiles_dir(ctx->dirs->data_dir, dir, sizeof(dir));
     DIR *d = opendir(dir);
     if (!d) {
       ui_locked_set_status(ui, STATUS_ERROR, "No saved profiles");
@@ -474,7 +474,7 @@ static int cmd_tool_load(command_ctx_t *ctx, const char *profile) {
   }
 
   char dir[NASH_PATH_MAX];
-  tool_profiles_dir(ctx->nash_dir, dir, sizeof(dir));
+  tool_profiles_dir(ctx->dirs->data_dir, dir, sizeof(dir));
   char path[NASH_PATH_MAX];
   if (snprintf(path, sizeof(path), "%s/%s", dir, profile) >= (int)sizeof(path)) {
     ui_locked_set_status(ui, STATUS_ERROR, "/tool load: path too long");

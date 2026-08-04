@@ -55,7 +55,7 @@ static char *longest_common_prefix(char **arr, int count) {
 /* Dynamic completion provider signature.
  * Fills candidates array with matches for `prefix`.
  * Returns number of candidates added. */
-typedef int (*dyn_provider_t)(const char *nash_dir, const char *prefix,
+typedef int (*dyn_provider_t)(const nash_dirs_t *dirs, const char *prefix,
                               int prefix_len, char ***arr, int *count, int *cap);
 
 typedef struct {
@@ -68,11 +68,11 @@ typedef struct {
 
 /* ── Dynamic providers ───────────────────────────────────── */
 
-static int provide_playbooks(const char *nash_dir, const char *prefix,
+static int provide_playbooks(const nash_dirs_t *dirs, const char *prefix,
                              int prefix_len, char ***arr, int *count, int *cap) {
-  if (!nash_dir) return 0;
+  if (!dirs) return 0;
   int pb_count = 0;
-  playbook_t **pbs = playbook_list(nash_dir, &pb_count);
+  playbook_t **pbs = playbook_list(dirs->data_dir, &pb_count);
   if (!pbs) return 0;
   int added = 0;
   for (int i = 0; i < pb_count; i++) {
@@ -87,10 +87,10 @@ static int provide_playbooks(const char *nash_dir, const char *prefix,
   return added;
 }
 
-static int provide_agents(const char *nash_dir, const char *prefix,
+static int provide_agents(const nash_dirs_t *dirs, const char *prefix,
                           int prefix_len, char ***arr, int *count, int *cap) {
-  if (!nash_dir) return 0;
-  agent_queue_t *q = agent_scan(nash_dir);
+  if (!dirs) return 0;
+  agent_queue_t *q = agent_scan(dirs->data_dir);
   if (!q) return 0;
   int added = 0;
   for (int i = 0; i < q->n_agents; i++) {
@@ -104,11 +104,11 @@ static int provide_agents(const char *nash_dir, const char *prefix,
   return added;
 }
 
-static int provide_runs(const char *nash_dir, const char *prefix,
+static int provide_runs(const nash_dirs_t *dirs, const char *prefix,
                         int prefix_len, char ***arr, int *count, int *cap) {
-  if (!nash_dir) return 0;
+  if (!dirs) return 0;
   char rdir[NASH_PATH_MAX];
-  snprintf(rdir, sizeof(rdir), "%s/runs", nash_dir);
+  snprintf(rdir, sizeof(rdir), "%s/runs", dirs->state_dir);
   DIR *d = opendir(rdir);
   if (!d) return 0;
   int added = 0;
@@ -134,9 +134,9 @@ static int provide_runs(const char *nash_dir, const char *prefix,
   return added;
 }
 
-static int provide_tool_names(const char *nash_dir, const char *prefix,
+static int provide_tool_names(const nash_dirs_t *dirs, const char *prefix,
                               int prefix_len, char ***arr, int *count, int *cap) {
-  (void)nash_dir;
+  (void)dirs;
   int added = 0;
   for (int i = 0; i < tool_plugin_count(); i++) {
     const tool_plugin_t *p = tool_plugin_get(i);
@@ -148,7 +148,7 @@ static int provide_tool_names(const char *nash_dir, const char *prefix,
   return added;
 }
 
-static int provide_tool_names_and_profiles(const char *nash_dir, const char *prefix,
+static int provide_tool_names_and_profiles(const nash_dirs_t *dirs, const char *prefix,
                                            int prefix_len, char ***arr,
                                            int *count, int *cap) {
   /* Provide tool names (for on/off) */
@@ -161,9 +161,9 @@ static int provide_tool_names_and_profiles(const char *nash_dir, const char *pre
     if (*count > before) added++;
   }
   /* Also provide saved profile names (for load) */
-  if (nash_dir) {
+  if (dirs) {
     char dir[NASH_PATH_MAX];
-    snprintf(dir, sizeof(dir), "%s/tool_profiles", nash_dir);
+    snprintf(dir, sizeof(dir), "%s/tool_profiles", dirs->data_dir);
     DIR *d = opendir(dir);
     if (d) {
       struct dirent *ent;
@@ -179,9 +179,9 @@ static int provide_tool_names_and_profiles(const char *nash_dir, const char *pre
   return added;
 }
 
-static int provide_dirs(const char *nash_dir, const char *prefix,
+static int provide_dirs(const nash_dirs_t *dirs, const char *prefix,
                         int prefix_len, char ***arr, int *count, int *cap) {
-  (void)nash_dir;
+  (void)dirs;
   /* Filesystem directory completion.
      * Split prefix into dirname + basename for opendir. */
   if (prefix_len == 0) {
@@ -394,7 +394,7 @@ static int subcmd_in_list(const char *subcmd, const char **list) {
 /* ── Main completion logic ───────────────────────────────── */
 
 completion_result_t *completion_complete(const char *buf, int len, int cursor,
-                                         const char *nash_dir) {
+                                         const nash_dirs_t *dirs) {
   if (len <= 0 || buf[0] != '/') return NULL;
 
   int ntokens = count_tokens(buf, cursor); /* tokens up to cursor */
@@ -477,13 +477,13 @@ completion_result_t *completion_complete(const char *buf, int len, int cursor,
 
     /* Add dynamic subcommands (e.g., playbook names for /play) */
     if (cmd->dyn_sub) {
-      cmd->dyn_sub(nash_dir, prefix, prefix_len,
+      cmd->dyn_sub(dirs, prefix, prefix_len,
                    &candidates, &ccount, &ccap);
     }
 
     /* For commands with no subcommands but a direct arg provider (e.g., /cwd) */
     if (!cmd->subcommands && cmd->dyn_arg && !cmd->arg_subcmds) {
-      cmd->dyn_arg(nash_dir, prefix, prefix_len,
+      cmd->dyn_arg(dirs, prefix, prefix_len,
                    &candidates, &ccount, &ccap);
     }
   } else {
@@ -550,7 +550,7 @@ completion_result_t *completion_complete(const char *buf, int len, int cursor,
         replace_start = cursor;
         replace_len = 0;
       }
-      cmd->dyn_arg(nash_dir, prefix, prefix_len,
+      cmd->dyn_arg(dirs, prefix, prefix_len,
                    &candidates, &ccount, &ccap);
     }
   }
@@ -664,7 +664,7 @@ void ui_state_complete_tab(ui_state_t *ui, int direction) {
 
   /* First tab: compute completions */
   completion_result_t *r = completion_complete(
-    ui->input_buffer, ui->input_len, ui->cursor_pos, ui->nash_dir);
+    ui->input_buffer, ui->input_len, ui->cursor_pos, ui->dirs);
 
   if (!r || r->count == 0) {
     completion_result_free(r);

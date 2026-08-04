@@ -23,12 +23,12 @@
 static int cmd_agents_list(command_ctx_t *ctx) {
   ui_state_t *ui = ctx->ui;
 
-  agent_queue_t *q = agent_scan(ctx->nash_dir);
+  agent_queue_t *q = agent_scan(ctx->dirs->data_dir);
   if (!q) {
     ui_locked_set_status(ui, STATUS_ERROR, "/agent: scan failed");
     return CMD_CONTINUE;
   }
-  agent_queue_load(q, ctx->nash_dir);
+  agent_queue_load(q, ctx->dirs->state_dir);
   agent_queue_schedule(q, time(NULL));
 
   str_t display = str_new(2048);
@@ -110,12 +110,12 @@ static int cmd_agents_show(command_ctx_t *ctx, const char *id) {
   while (*id == ' ')
     id++;
 
-  agent_queue_t *q = agent_scan(ctx->nash_dir);
+  agent_queue_t *q = agent_scan(ctx->dirs->data_dir);
   if (!q) {
     ui_locked_set_status(ui, STATUS_ERROR, "/agent show: scan failed");
     return CMD_CONTINUE;
   }
-  agent_queue_load(q, ctx->nash_dir);
+  agent_queue_load(q, ctx->dirs->state_dir);
   agent_queue_schedule(q, time(NULL));
 
   const agent_entry_t *found = agent_find(q, id);
@@ -216,13 +216,13 @@ static int cmd_agents_run(command_ctx_t *ctx, const char *id) {
     if (*agent_arguments == '\0') agent_arguments = NULL;
   }
 
-  agent_queue_t *q = agent_scan(ctx->nash_dir);
+  agent_queue_t *q = agent_scan(ctx->dirs->data_dir);
   if (!q) {
     ui_locked_set_status(ui, STATUS_ERROR, "/agent run: scan failed");
     free(id_buf);
     return CMD_CONTINUE;
   }
-  agent_queue_load(q, ctx->nash_dir);
+  agent_queue_load(q, ctx->dirs->state_dir);
   agent_queue_schedule(q, time(NULL));
 
   const agent_entry_t *found = agent_find(q, id_buf);
@@ -262,7 +262,7 @@ static int cmd_agents_run(command_ctx_t *ctx, const char *id) {
   /* Create workspace for agent -- two-layer memory (workspace first, global fallback) */
   workspace_t *agent_ws = NULL;
   if (found->workspace_name && found->workspace_name[0]) {
-    agent_ws = workspace_new(ctx->nash_dir, found->workspace_name,
+    agent_ws = workspace_new(ctx->dirs->data_dir, found->workspace_name,
                              0, ctx->cfg->workspace_global_weight);
     if (agent_ws) {
       workspace_set_recall_config(agent_ws, ctx->cfg->recall_min_score,
@@ -282,7 +282,7 @@ static int cmd_agents_run(command_ctx_t *ctx, const char *id) {
 
   *ctx->pargs = (playbook_args_t){
     .playbook = pb,
-    .nash_dir = (char *)ctx->nash_dir,
+    .nash_dir = (char *)ctx->dirs->data_dir,
     .store = ctx->store,
     .memory = agent_ws ? agent_ws->global : ctx->memory,
     .ws_memory = agent_ws ? agent_ws->workspace : NULL,
@@ -332,7 +332,7 @@ static int cmd_agents_history(command_ctx_t *ctx, const char *filter_id) {
       filter_id++;
 
   char path[NASH_PATH_MAX];
-  snprintf(path, sizeof(path), "%s/agent/history.jsonl", ctx->nash_dir);
+  snprintf(path, sizeof(path), "%s/agent/history.jsonl", ctx->dirs->state_dir);
 
   FILE *f = fopen(path, "r");
   if (!f) {
@@ -431,12 +431,12 @@ static int cmd_agents_history(command_ctx_t *ctx, const char *filter_id) {
 static int cmd_agents_due(command_ctx_t *ctx) {
   ui_state_t *ui = ctx->ui;
 
-  agent_queue_t *q = agent_scan(ctx->nash_dir);
+  agent_queue_t *q = agent_scan(ctx->dirs->data_dir);
   if (!q) {
     ui_locked_set_status(ui, STATUS_ERROR, "/agent due: scan failed");
     return CMD_CONTINUE;
   }
-  agent_queue_load(q, ctx->nash_dir);
+  agent_queue_load(q, ctx->dirs->state_dir);
   agent_queue_schedule(q, time(NULL));
 
   str_t display = str_new(1024);
@@ -490,20 +490,20 @@ static int cmd_agents_result(command_ctx_t *ctx, const char *id) {
   /* Try exact ID first, then resolve via scan */
   char path[NASH_PATH_MAX];
   snprintf(path, sizeof(path),
-           "%s/agent/results/%s/latest.md", ctx->nash_dir, id);
+           "%s/agent/results/%s/latest.md", ctx->dirs->state_dir, id);
 
   size_t clen = 0;
   char *content = slurp_file(path, &clen);
   if (!content) {
     /* Suffix resolve: scan to find full agent ID */
-    agent_queue_t *q = agent_scan(ctx->nash_dir);
+    agent_queue_t *q = agent_scan(ctx->dirs->data_dir);
     if (q) {
-      agent_queue_load(q, ctx->nash_dir);
+      agent_queue_load(q, ctx->dirs->state_dir);
       agent_queue_schedule(q, time(NULL));
       const agent_entry_t *found = agent_find(q, id);
       if (found && is_safe_path_component(found->id)) {
         snprintf(path, sizeof(path),
-                 "%s/agent/results/%s/latest.md", ctx->nash_dir, found->id);
+                 "%s/agent/results/%s/latest.md", ctx->dirs->state_dir, found->id);
         content = slurp_file(path, &clen);
       }
       agent_queue_free(q);

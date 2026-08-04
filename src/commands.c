@@ -38,7 +38,7 @@ static int cmd_name(command_ctx_t *ctx, const char *name) {
                          "/name: invalid name (no slashes, max 255 chars)");
     return CMD_CONTINUE;
   }
-  char *sb = sessions_base_dir(ctx->nash_dir, ctx->cfg->workspace);
+  char *sb = sessions_base_dir(ctx->dirs->state_dir, ctx->cfg->workspace);
   char link_path[1088];
   path_join(link_path, sizeof(link_path), sb, name);
   free(sb);
@@ -108,7 +108,7 @@ static int cmd_dream(command_ctx_t *ctx) {
   /* Load dream playbook from ~/.nash/playbooks/dream.yaml.
      * If not found, write the default and load it. */
   char pb_path[NASH_PATH_MAX];
-  playbook_resolve("dream", ctx->nash_dir, pb_path, sizeof(pb_path));
+  playbook_resolve("dream", ctx->dirs->data_dir, pb_path, sizeof(pb_path));
   playbook_t *dream_pb = playbook_load(pb_path);
   if (!dream_pb) {
     ui_locked_set_status(ui, STATUS_ERROR,
@@ -118,7 +118,7 @@ static int cmd_dream(command_ctx_t *ctx) {
 
   *ctx->pargs = (playbook_args_t){
     .playbook = dream_pb,
-    .nash_dir = (char *)ctx->nash_dir,
+    .nash_dir = (char *)ctx->dirs->data_dir,
     .store = ctx->store,
     .memory = ctx->memory,
     .ws_memory = ctx->ws ? ctx->ws->workspace : NULL,
@@ -158,11 +158,11 @@ static int cmd_play(command_ctx_t *ctx, const char *arg) {
   if (strcmp(arg, "list") == 0) {
     /* List available playbooks */
     int pb_count = 0;
-    playbook_t **pbs = playbook_list(ctx->nash_dir, &pb_count);
+    playbook_t **pbs = playbook_list(ctx->dirs->data_dir, &pb_count);
     str_t display = str_new(1024);
     str_appendf(&display, "# Available Playbooks\n\n");
     if (pb_count == 0) {
-      str_appendf(&display, "No playbooks found in %s/playbooks/\n", ctx->nash_dir);
+      str_appendf(&display, "No playbooks found in %s/playbooks/\n", ctx->dirs->data_dir);
     } else {
       for (int i = 0; i < pb_count; i++) {
         str_appendf(&display, "- **%s**: %s (%d passes)\n",
@@ -189,7 +189,7 @@ static int cmd_play(command_ctx_t *ctx, const char *arg) {
     snprintf(pb_path, sizeof(pb_path), "%s", arg);
   } else {
     snprintf(pb_path, sizeof(pb_path), "%s/playbooks/%s.yaml",
-             ctx->nash_dir, arg);
+             ctx->dirs->data_dir, arg);
   }
   playbook_t *pb = playbook_load(pb_path);
   if (!pb) {
@@ -200,7 +200,7 @@ static int cmd_play(command_ctx_t *ctx, const char *arg) {
 
   *ctx->pargs = (playbook_args_t){
     .playbook = pb,
-    .nash_dir = (char *)ctx->nash_dir,
+    .nash_dir = (char *)ctx->dirs->data_dir,
     .store = ctx->store,
     .memory = ctx->memory,
     .ws_memory = ctx->ws ? ctx->ws->workspace : NULL,
@@ -265,7 +265,7 @@ static int cmd_runs(command_ctx_t *ctx, const char *sub) {
   }
 
   char rdir[NASH_PATH_MAX];
-  snprintf(rdir, sizeof(rdir), "%s/runs", ctx->nash_dir);
+  snprintf(rdir, sizeof(rdir), "%s/runs", ctx->dirs->state_dir);
 
   if (show_detail && show_id && *show_id) {
     /* Validate run ID to prevent path traversal */
@@ -305,7 +305,7 @@ static int cmd_runs(command_ctx_t *ctx, const char *sub) {
     str_appendf(&display, "# Playbook Runs\n\n");
 
     if (!d) {
-      str_appendf(&display, "No runs yet (%s/runs/ not found)\n", ctx->nash_dir);
+      str_appendf(&display, "No runs yet (%s/runs/ not found)\n", ctx->dirs->state_dir);
     } else {
       struct dirent *ent;
       int count = 0;

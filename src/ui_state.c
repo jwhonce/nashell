@@ -79,7 +79,7 @@ void ui_state_free(ui_state_t *ui) {
     free(ui->pb_passes[i].pass_label);
   }
   free(ui->pb_passes);
-  free(ui->nash_dir);
+  /* ui->dirs is not owned — it's the global nash_dirs_t* from main */
   free(ui->workspace_name);
   free(ui->current_label);
   for (int i = 0; i < ui->nav_depth; i++) {

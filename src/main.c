@@ -48,6 +48,7 @@
 #include "commands_internal.h"
 #include "agents.h"
 #include "setup.h"
+#include "dirs.h"
 
 /* (load_legacy_scratchpad removed — legacy format handled by scratchpad_parse) */
 
@@ -66,9 +67,9 @@ static void shutdown_handler(int sig) {
  * Uses flock() — automatically released when the process exits/crashes. */
 static int daemon_lock_fd = -1;
 
-static int daemon_lock_acquire(const char *nash_dir) {
+static int daemon_lock_acquire(const char *state_dir) {
   char path[NASH_PATH_MAX];
-  snprintf(path, sizeof(path), "%s/daemon.lock", nash_dir);
+  snprintf(path, sizeof(path), "%s/daemon.lock", state_dir);
   daemon_lock_fd = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0644);
   if (daemon_lock_fd < 0) {
     fprintf(stderr, "[daemon] warning: cannot create lock file %s: %s\n",
@@ -108,9 +109,9 @@ static void daemon_lock_release(void) {
 /* Check if a daemon (--matrix/--telegram) is currently running.
  * Returns 1 if daemon is running, 0 otherwise.
  * Uses non-blocking flock() probe on daemon.lock. */
-static int daemon_is_running(const char *nash_dir) {
+static int daemon_is_running(const char *state_dir) {
   char path[NASH_PATH_MAX];
-  snprintf(path, sizeof(path), "%s/daemon.lock", nash_dir);
+  snprintf(path, sizeof(path), "%s/daemon.lock", state_dir);
   int fd = open(path, O_RDONLY | O_CLOEXEC);
   if (fd < 0) return 0; /* no lock file — no daemon */
   int locked = (flock(fd, LOCK_EX | LOCK_NB) != 0);
@@ -122,13 +123,13 @@ static int daemon_is_running(const char *nash_dir) {
 /* Route a result to the mailbox outbox so bridge threads (Matrix/Telegram)
  * can relay it.  Only writes if a daemon is currently running.
  * ws_name and agent_name are optional (NULL = omitted from prefix). */
-static void route_to_outbox(const char *nash_dir, const char *result,
+static void route_to_outbox(const char *state_dir, const char *result,
                             const char *ws_name, const char *agent_name) {
-  if (!result || !nash_dir) return;
-  if (!daemon_is_running(nash_dir)) return;
+  if (!result || !state_dir) return;
+  if (!daemon_is_running(state_dir)) return;
 
   char mbox_dir[NASH_PATH_MAX];
-  if (mailbox_init(nash_dir, mbox_dir, sizeof(mbox_dir)) != 0) return;
+  if (mailbox_init(state_dir, mbox_dir, sizeof(mbox_dir)) != 0) return;
 
   /* Build prefixed result: "[workspace: X] [agent: Y]\n\nresult" */
   str_t msg = str_new(strlen(result) + 128);
@@ -151,14 +152,14 @@ static void route_to_outbox(const char *nash_dir, const char *result,
 /* Route a query notification to the mailbox outbox so bridge threads
  * can show it as the thread root.  Only writes if a daemon is running.
  * is_new_session: 1 = start new thread (root), 0 = reply in existing thread. */
-static void route_query_to_outbox(const char *nash_dir, const char *query,
+static void route_query_to_outbox(const char *state_dir, const char *query,
                                   const char *ws_name, const char *agent_name,
                                   int is_new_session) {
-  if (!query || !nash_dir) return;
-  if (!daemon_is_running(nash_dir)) return;
+  if (!query || !state_dir) return;
+  if (!daemon_is_running(state_dir)) return;
 
   char mbox_dir[NASH_PATH_MAX];
-  if (mailbox_init(nash_dir, mbox_dir, sizeof(mbox_dir)) != 0) return;
+  if (mailbox_init(state_dir, mbox_dir, sizeof(mbox_dir)) != 0) return;
 
   const char *query_id = mailbox_gen_id();
   const char *source = agent_name ? "agent" : "tui";
@@ -178,19 +179,6 @@ static void route_query_to_outbox(const char *nash_dir, const char *query,
   nash_log("[mailbox] query routed to outbox for bridge relay");
 }
 
-/* Get the nash data directory: ~/.nash/ or config override */
-static char *get_nash_dir(const config_t *cfg) {
-  if (cfg->data_dir && cfg->data_dir[0]) {
-    mkdir(cfg->data_dir, 0755);
-    return xstrdup(cfg->data_dir);
-  }
-  const char *home = getenv("HOME");
-  if (!home) home = "/tmp";
-  char path[NASH_PATH_MAX];
-  snprintf(path, sizeof(path), "%s/.nash", home);
-  mkdir(path, 0755);
-  return xstrdup(path);
-}
 
 /* Recursive mkdir: create all path components (like mkdir -p).
  * Returns 0 on success, -1 on failure (errno set). */
@@ -420,7 +408,7 @@ static void session_cleanup(tool_ctx_t *tools, react_ctx_t *react,
  * Replaces 8+ duplicated cleanup sequences across early-return paths.
  * All _free functions handle NULL safely. */
 static void cleanup_globals(store_t *shared_store, workspace_t *ws,
-                            provider_t *provider, char *nash_dir,
+                            provider_t *provider, nash_dirs_t *dirs,
                             char *props_json, char *server_model,
                             config_t *cfg) {
   session_index_free(g_session_idx);
@@ -438,7 +426,7 @@ static void cleanup_globals(store_t *shared_store, workspace_t *ws,
   g_reflection_provider = NULL;
   g_consolidation_provider = NULL;
   provider_free(provider);
-  free(nash_dir);
+  nash_dirs_free(dirs);
   free(props_json);
   free(server_model);
   config_free(cfg);
@@ -451,7 +439,7 @@ static void cleanup_globals(store_t *shared_store, workspace_t *ws,
  * access between this thread and the react loop's memory_query. */
 
 typedef struct {
-  char *nash_dir;               /* strdup'd */
+  char *state_dir;              /* strdup'd — sessions live under state_dir */
   char *workspace;              /* strdup'd, may be NULL */
   embed_config_t embed_cfg;     /* copied config (strings strdup'd) */
   session_index_t *session_idx; /* shared, protected by its own mtx */
@@ -470,12 +458,12 @@ static void *backfill_thread_fn(void *arg) {
 
   /* Backfill global sessions */
   char sessions_dir[NASH_PATH_MAX];
-  snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", a->nash_dir);
+  snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", a->state_dir);
   session_index_chunk_backfill(sessions_dir, embed, a->session_idx);
 
   /* Backfill workspace sessions */
   if (a->workspace && a->workspace[0]) {
-    char *ws_sessions = sessions_base_dir(a->nash_dir, a->workspace);
+    char *ws_sessions = sessions_base_dir(a->state_dir, a->workspace);
     session_index_chunk_backfill(ws_sessions, embed, a->session_idx);
     free(ws_sessions);
   }
@@ -483,7 +471,7 @@ static void *backfill_thread_fn(void *arg) {
   embed_free(embed);
 
 done:
-  free(a->nash_dir);
+  free(a->state_dir);
   free(a->workspace);
   free(a->embed_cfg.model);
   free(a->embed_cfg.api_base);
@@ -522,11 +510,9 @@ int main(int argc, char **argv) {
      * Constructors run before main() in undefined order across TUs. */
   tool_plugin_sort();
 
-  /* Load config from ~/.nash/config.toml (or default) */
+  /* Load config — find config.toml via XDG or legacy path */
   char config_path[NASH_PATH_MAX];
-  const char *home = getenv("HOME");
-  if (!home) home = "/tmp";
-  snprintf(config_path, sizeof(config_path), "%s/.nash/config.toml", home);
+  nash_dirs_find_config(config_path, sizeof(config_path));
 
   config_t *cfg = config_load(config_path);
 
@@ -644,9 +630,9 @@ int main(int argc, char **argv) {
       mailbox_timeout = atoi(argv[++i]);
       mailbox_mode = 1;
     } else if (strcmp(argv[i], "--workspace-list") == 0 || strcmp(argv[i], "-wl") == 0) {
-      char *nd = get_nash_dir(cfg);
-      workspace_list_all(nd);
-      free(nd);
+      nash_dirs_t *d = nash_dirs_resolve(cfg->data_dir);
+      workspace_list_all(d->data_dir);
+      nash_dirs_free(d);
       config_free(cfg);
       return 0;
     } else if ((strcmp(argv[i], "--workspace") == 0 || strcmp(argv[i], "-w") == 0) && i + 1 < argc) {
@@ -749,14 +735,14 @@ int main(int argc, char **argv) {
     g_path_given = 1;
   }
 
-  /* Initialize data directory */
-  char *nash_dir = get_nash_dir(cfg);
+  /* Resolve all directories (XDG or legacy) */
+  nash_dirs_t *dirs = nash_dirs_resolve(cfg->data_dir);
 
-  /* Create models/ directory for per-model profiles */
+  /* Create models/ directory for per-model profiles (config = user-authored) */
   {
     char models_dir[1024];
-    snprintf(models_dir, sizeof(models_dir), "%s/models", nash_dir);
-    mkdir(models_dir, 0755);
+    snprintf(models_dir, sizeof(models_dir), "%s/models", dirs->config_dir);
+    mkdir_p(models_dir, 0755);
     config_load_model_profiles(cfg, models_dir);
   }
 
@@ -764,12 +750,12 @@ int main(int argc, char **argv) {
   config_write_default(config_path);
 
   /* Load credentials.toml (API keys) and merge into named providers */
-  config_load_credentials(cfg, nash_dir);
+  config_load_credentials(cfg, dirs->config_dir);
 
   /* --setup: interactive setup wizard (exit early, before provider resolution) */
   if (setup_mode) {
-    int rc = setup_run(nash_dir, 0);
-    free(nash_dir);
+    int rc = setup_run(dirs->config_dir, 0);
+    nash_dirs_free(dirs);
     config_free(cfg);
     return rc;
   }
@@ -779,7 +765,7 @@ int main(int argc, char **argv) {
   if (load_spec_path) {
     if (config_load_spec_overlay(cfg, load_spec_path) != 0) {
       fprintf(stderr, "[error] failed to load spec from %s\n", load_spec_path);
-      free(nash_dir);
+      nash_dirs_free(dirs);
       config_free(cfg);
       return 1;
     }
@@ -791,7 +777,7 @@ int main(int argc, char **argv) {
     char cwd_auto[NASH_PATH_MAX];
     if (getcwd(cwd_auto, sizeof(cwd_auto))) {
       char ws_prefix[NASH_PATH_MAX];
-      snprintf(ws_prefix, sizeof(ws_prefix), "%s/workspaces/", nash_dir);
+      snprintf(ws_prefix, sizeof(ws_prefix), "%s/workspaces/", dirs->data_dir);
       size_t pfx_len = strlen(ws_prefix);
       if (strncmp(cwd_auto, ws_prefix, pfx_len) == 0 && cwd_auto[pfx_len]) {
         /* CWD is under workspaces/ — extract workspace name.
@@ -815,7 +801,7 @@ int main(int argc, char **argv) {
   if (cfg->workspace && cfg->workspace[0]) {
     char ws_config[NASH_PATH_MAX];
     snprintf(ws_config, sizeof(ws_config), "%s/workspaces/%s/config.toml",
-             nash_dir, cfg->workspace);
+             dirs->config_dir, cfg->workspace);
     struct stat ws_st;
     if (stat(ws_config, &ws_st) == 0) {
       fprintf(stderr, "[info] loading workspace config: %s\n", ws_config);
@@ -825,19 +811,19 @@ int main(int argc, char **argv) {
 
   /* ── Postmortem mode: no LLM needed ── */
   if (postmortem_mode) {
-    postmortem_report_t *pm = postmortem_analyze(nash_dir, postmortem_sessions);
+    postmortem_report_t *pm = postmortem_analyze(dirs->state_dir, postmortem_sessions);
     postmortem_print(pm);
 
     /* Save evidence bundle */
     char bundle_path[NASH_PATH_MAX];
-    snprintf(bundle_path, sizeof(bundle_path), "%s/postmortem.md", nash_dir);
+    snprintf(bundle_path, sizeof(bundle_path), "%s/postmortem.md", dirs->state_dir);
     if (pm->total_failures > 0) {
       postmortem_save(pm, bundle_path);
       fprintf(stderr, "  Evidence bundle saved: %s\n\n", bundle_path);
     }
 
     postmortem_free(pm);
-    free(nash_dir);
+    nash_dirs_free(dirs);
     config_free(cfg);
     return 0;
   }
@@ -856,15 +842,15 @@ int main(int argc, char **argv) {
       char ans[16] = {0};
       if (fgets(ans, sizeof(ans), stdin) &&
           (ans[0] == '\n' || ans[0] == 'y' || ans[0] == 'Y')) {
-        int rc = setup_run(nash_dir, 0);
-        free(nash_dir);
+        int rc = setup_run(dirs->config_dir, 0);
+        nash_dirs_free(dirs);
         config_free(cfg);
         return rc;
       }
     }
     fprintf(stderr, "nash: failed to resolve provider configuration.\n"
                     "Run 'nash --setup' to configure, or use --api URL\n");
-    free(nash_dir);
+    nash_dirs_free(dirs);
     config_free(cfg);
     return 1;
   }
@@ -889,8 +875,8 @@ int main(int argc, char **argv) {
           if (fgets(ans, sizeof(ans), stdin) &&
               (ans[0] == '\n' || ans[0] == 'y' ||
                ans[0] == 'Y')) {
-            int rc = setup_run(nash_dir, 0);
-            free(nash_dir);
+            int rc = setup_run(dirs->config_dir, 0);
+            nash_dirs_free(dirs);
             config_free(cfg);
             return rc;
           }
@@ -899,7 +885,7 @@ int main(int argc, char **argv) {
                 "Set the variable: export %s=your-key-here\n"
                 "Or run: nash --setup\n",
                 key_env);
-        free(nash_dir);
+        nash_dirs_free(dirs);
         config_free(cfg);
         return 1;
       }
@@ -1070,7 +1056,7 @@ int main(int argc, char **argv) {
     if (g_consolidation_provider && g_consolidation_provider != provider)
       provider_free(g_consolidation_provider);
     provider_free(provider);
-    free(nash_dir);
+    nash_dirs_free(dirs);
     free(props_json);
     free(server_model);
     config_free(cfg);
@@ -1079,17 +1065,17 @@ int main(int argc, char **argv) {
 
   /* Print banner (skip in headless playbook/agent mode) */
   if (!play_arg && !agents_mode)
-    print_banner(cfg, props_json, nash_dir, matched_profile_file);
+    print_banner(cfg, props_json, dirs, matched_profile_file);
 
   /* Shared store + memory (workspace-aware) */
-  store_t *shared_store = store_new(nash_dir);
+  store_t *shared_store = store_new(dirs->data_dir);
 
   /* Create workspace: two-layer memory (global + optional workspace).
      * If no workspace is configured, workspace_t wraps just the global
      * memory — backward compatible with single-pool behavior. */
   int ws_isolated = cfg->workspace_isolated ||
                     (cfg->workspace_global_recall == 0);
-  workspace_t *ws = workspace_new(nash_dir, cfg->workspace,
+  workspace_t *ws = workspace_new(dirs->data_dir, cfg->workspace,
                                   ws_isolated, cfg->workspace_global_weight);
   /* For backward compatibility, 'memory' points to global layer.
      * Code that hasn't been migrated to workspace_* yet (e.g., consolidation)
@@ -1131,12 +1117,12 @@ int main(int argc, char **argv) {
   session_index_t *session_idx = NULL;
   {
     char sessions_dir[NASH_PATH_MAX];
-    snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", nash_dir);
+    snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", dirs->state_dir);
     session_idx = session_index_load(sessions_dir);
 
     /* Also load workspace sessions into the same index */
     if (cfg->workspace && cfg->workspace[0] && session_idx) {
-      char *ws_sessions = sessions_base_dir(nash_dir, cfg->workspace);
+      char *ws_sessions = sessions_base_dir(dirs->config_dir, cfg->workspace);
       session_index_load_dir(session_idx, ws_sessions);
       free(ws_sessions);
     }
@@ -1150,7 +1136,7 @@ int main(int argc, char **argv) {
       if (src_embed) {
         backfill_args_t *bfa = xcalloc(1, sizeof(*bfa));
         if (bfa) {
-          bfa->nash_dir = xstrdup(nash_dir);
+          bfa->state_dir = xstrdup(dirs->state_dir);
           bfa->workspace = (cfg->workspace && cfg->workspace[0])
                              ? xstrdup(cfg->workspace)
                              : NULL;
@@ -1201,10 +1187,10 @@ int main(int argc, char **argv) {
     if (ws && ws->workspace) {
       snprintf(dream_ts_path, sizeof(dream_ts_path),
                "%s/workspaces/%s/.memory/.last_dream",
-               nash_dir, cfg->workspace);
+               dirs->config_dir, cfg->workspace);
     } else {
       snprintf(dream_ts_path, sizeof(dream_ts_path),
-               "%s/memory/.last_dream", nash_dir);
+               "%s/memory/.last_dream", dirs->data_dir);
     }
     struct stat dream_st;
 
@@ -1233,7 +1219,7 @@ int main(int argc, char **argv) {
   if (regression_mode) {
     /* Create regression directory and seed query bank */
     char regression_dir[NASH_PATH_MAX];
-    snprintf(regression_dir, sizeof(regression_dir), "%s/regression", nash_dir);
+    snprintf(regression_dir, sizeof(regression_dir), "%s/regression", dirs->data_dir);
     regression_write_seed(regression_dir);
 
     /* Load query banks */
@@ -1241,7 +1227,7 @@ int main(int argc, char **argv) {
     query_bank_t *banks = regression_load_banks(regression_dir, &n_banks);
     if (!banks || n_banks == 0) {
       fprintf(stderr, "[regression] no query banks found in %s\n", regression_dir);
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
 
@@ -1250,7 +1236,7 @@ int main(int argc, char **argv) {
     /* Run tests */
     regression_report_t *report = regression_run(
       banks, n_banks, regression_split,
-      provider, cfg, memory, shared_store, nash_dir);
+      provider, cfg, memory, shared_store, dirs->data_dir);
 
     regression_print_report(report);
 
@@ -1260,7 +1246,7 @@ int main(int argc, char **argv) {
     if (validate_harness) {
       char baseline_path[NASH_PATH_MAX];
       snprintf(baseline_path, sizeof(baseline_path),
-               "%s/regression/baseline.json", nash_dir);
+               "%s/regression/baseline.json", dirs->data_dir);
 
       if (strcmp(validate_harness, "baseline") == 0) {
         regression_save_report(report, baseline_path);
@@ -1280,7 +1266,7 @@ int main(int argc, char **argv) {
 
     regression_free_report(report);
     regression_free_banks(banks, n_banks);
-    cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+    cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
     return exit_code;
   }
 
@@ -1290,13 +1276,13 @@ int main(int argc, char **argv) {
     if (rounds < 0) {
       fprintf(stderr, "[optimize] invalid budget '%s' — use light, medium, heavy, or a number\n",
               optimize_budget);
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
 
     /* Create regression directory and seed query banks */
     char regression_dir[NASH_PATH_MAX];
-    snprintf(regression_dir, sizeof(regression_dir), "%s/regression", nash_dir);
+    snprintf(regression_dir, sizeof(regression_dir), "%s/regression", dirs->data_dir);
     regression_write_seed(regression_dir);
 
     /* Load query banks */
@@ -1304,7 +1290,7 @@ int main(int argc, char **argv) {
     query_bank_t *banks = regression_load_banks(regression_dir, &n_banks);
     if (!banks || n_banks == 0) {
       fprintf(stderr, "[optimize] no query banks found in %s\n", regression_dir);
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
 
@@ -1353,7 +1339,7 @@ int main(int argc, char **argv) {
       const model_profile_t *profile = config_match_model(cfg, server_model);
       if (profile && profile->source_file) {
         snprintf(profile_path_buf, sizeof(profile_path_buf),
-                 "%s/models/%s", nash_dir, profile->source_file);
+                 "%s/models/%s", dirs->config_dir, profile->source_file);
         profile_path = profile_path_buf;
       }
     }
@@ -1375,14 +1361,14 @@ int main(int argc, char **argv) {
     };
 
     prompt_candidate_t best = optimize_run(
-      &opt, banks, n_banks, cfg, memory, shared_store, nash_dir);
+      &opt, banks, n_banks, cfg, memory, shared_store, dirs->data_dir);
 
     /* Cleanup */
     optimize_free_candidate(&best);
     regression_free_banks(banks, n_banks);
     if (reflection_provider != provider)
       provider_free(reflection_provider);
-    cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+    cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
     return 0;
   }
 
@@ -1393,12 +1379,12 @@ int main(int argc, char **argv) {
       snprintf(pb_path, sizeof(pb_path), "%s", validate_playbook_arg);
     } else {
       snprintf(pb_path, sizeof(pb_path), "%s/playbooks/%s.yaml",
-               nash_dir, validate_playbook_arg);
+               dirs->data_dir, validate_playbook_arg);
     }
     playbook_t *pb = playbook_load(pb_path);
     if (!pb) {
       fprintf(stderr, "Error: cannot load playbook '%s'\n", pb_path);
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
     fprintf(stderr, "Validating playbook '%s' (%d passes) from %s\n",
@@ -1407,7 +1393,7 @@ int main(int argc, char **argv) {
     int rc = playbook_validate(pb, errbuf, sizeof(errbuf));
     fprintf(stderr, "%s", errbuf);
     playbook_free(pb);
-    cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+    cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
     return rc == 0 ? 0 : 1;
   }
 
@@ -1418,13 +1404,13 @@ int main(int argc, char **argv) {
     if (strchr(play_arg, '/') || strchr(play_arg, '.')) {
       snprintf(pb_path, sizeof(pb_path), "%s", play_arg);
     } else {
-      playbook_resolve(play_arg, nash_dir, pb_path, sizeof(pb_path));
+      playbook_resolve(play_arg, dirs->data_dir, pb_path, sizeof(pb_path));
     }
 
     playbook_t *pb = playbook_load(pb_path);
     if (!pb) {
       fprintf(stderr, "Error: cannot load playbook '%s'\n", pb_path);
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
 
@@ -1434,7 +1420,7 @@ int main(int argc, char **argv) {
       if (playbook_validate(pb, vbuf, sizeof(vbuf)) != 0) {
         fprintf(stderr, "[play] Playbook validation failed:\n%s", vbuf);
         playbook_free(pb);
-        cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+        cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
         return 1;
       }
     }
@@ -1444,7 +1430,7 @@ int main(int argc, char **argv) {
 
     playbook_args_t pargs = {
       .playbook = pb,
-      .nash_dir = nash_dir,
+      .nash_dir = dirs->data_dir,
       .store = shared_store,
       .memory = memory,
       .cfg = cfg,
@@ -1464,13 +1450,13 @@ int main(int argc, char **argv) {
             pb->name, ok ? "completed successfully" : "FAILED");
 
     /* Route result to outbox if a daemon (--matrix/--telegram) is running */
-    route_to_outbox(nash_dir, pargs.result_text,
+    route_to_outbox(dirs->state_dir, pargs.result_text,
                     ws && ws->name ? ws->name : NULL, pb->name);
 
     free(pargs.result_text);
     free(pargs.last_session_dir);
     playbook_free(pb);
-    cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+    cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
     return ok ? 0 : 1;
   }
 
@@ -1485,13 +1471,6 @@ int main(int argc, char **argv) {
       agents_list = 1;
     }
 
-    /* Acquire lock (separate from daemon lock -- uses agent.lock) */
-    {
-      char lock_path[NASH_PATH_MAX];
-      snprintf(lock_path, sizeof(lock_path), "%s/agent", nash_dir);
-      mkdir(lock_path, 0755);
-    }
-
     /* Install signal handlers for graceful shutdown */
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -1502,21 +1481,21 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &sa, NULL);
 
     /* Scan + schedule */
-    agent_queue_t *q = agent_scan(nash_dir);
+    agent_queue_t *q = agent_scan(dirs->data_dir);
     if (!q) {
       fprintf(stderr, "[agent] error: scan failed\n");
       free(agent_arguments);
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
-    agent_queue_load(q, nash_dir);
+    agent_queue_load(q, dirs->state_dir);
     agent_queue_schedule(q, time(NULL));
 
     if (agents_list) {
       agent_queue_print(q, stdout);
       agent_queue_free(q);
       free(agent_arguments);
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 0;
     }
 
@@ -1540,7 +1519,7 @@ int main(int argc, char **argv) {
       if (n == 0) fprintf(stderr, "  (no agent definitions due)\n");
       agent_queue_free(q);
       free(agent_arguments);
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 0;
     }
 
@@ -1550,28 +1529,28 @@ int main(int argc, char **argv) {
          * through its mailbox outbox so the bridge can deliver them. */
     char mbox_dir[NASH_PATH_MAX];
     const char *mbox = NULL;
-    if (mailbox_init(nash_dir, mbox_dir, sizeof(mbox_dir)) == 0)
+    if (mailbox_init(dirs->state_dir, mbox_dir, sizeof(mbox_dir)) == 0)
       mbox = mbox_dir;
-    int n_fail = agent_run_due(nash_dir, shared_store, cfg, provider,
+    int n_fail = agent_run_due(dirs->state_dir, shared_store, cfg, provider,
                                server_model, agent_target_id,
                                agent_arguments,
                                &shutdown_requested, mbox);
     free(agent_arguments);
-    cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+    cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
     return n_fail > 0 ? 1 : 0;
   }
 
   /* Daemon mode: watch mailbox inbox for tasks, process them sequentially */
   if (daemon_mode) {
     /* Prevent multiple daemons sharing the same mailbox/room */
-    if (daemon_lock_acquire(nash_dir) != 0) {
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+    if (daemon_lock_acquire(dirs->state_dir) != 0) {
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
     char mbox_dir[NASH_PATH_MAX];
-    if (mailbox_init(nash_dir, mbox_dir, sizeof(mbox_dir)) != 0) {
+    if (mailbox_init(dirs->state_dir, mbox_dir, sizeof(mbox_dir)) != 0) {
       fprintf(stderr, "[error] failed to initialize mailbox\n");
-      cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+      cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
     fprintf(stderr, "[daemon] nash mailbox daemon started\n");
@@ -1596,13 +1575,13 @@ int main(int argc, char **argv) {
     int tg_started = 0;
     telegram_ctx_t tg_ctx;
     if (telegram_mode) {
-      telegram_init(&tg_ctx, config_path, nash_dir, mbox_dir, &shutdown_requested);
+      telegram_init(&tg_ctx, config_path, dirs->state_dir, mbox_dir, &shutdown_requested);
       if (!tg_ctx.bot_token || !tg_ctx.chat_id) {
         /* No config — run interactive setup */
         if (telegram_setup(&tg_ctx) != 0) {
           fprintf(stderr, "[telegram] setup failed, exiting\n");
           telegram_free(&tg_ctx);
-          cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+          cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
           return 1;
         }
       }
@@ -1620,13 +1599,13 @@ int main(int argc, char **argv) {
     int mx_started = 0;
     matrix_ctx_t mx_ctx;
     if (matrix_mode) {
-      matrix_init(&mx_ctx, config_path, nash_dir, mbox_dir, &shutdown_requested);
+      matrix_init(&mx_ctx, config_path, dirs->state_dir, mbox_dir, &shutdown_requested);
       if (!mx_ctx.access_token || !mx_ctx.room_id) {
         /* No config — run interactive setup */
         if (matrix_setup(&mx_ctx) != 0) {
           fprintf(stderr, "[matrix] setup failed, exiting\n");
           matrix_free(&mx_ctx);
-          cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+          cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
           return 1;
         }
       }
@@ -1672,7 +1651,7 @@ int main(int argc, char **argv) {
       s->name = cfg->workspace ? xstrdup(cfg->workspace) : NULL;
       s->ws = ws; /* reuse the ws already created at L655 */
       s->mem = ws ? ws->global : NULL;
-      s->session_dir = create_session_dir(nash_dir, cfg->workspace);
+      s->session_dir = create_session_dir(dirs->config_dir, cfg->workspace);
       s->journal = journal_new(s->session_dir);
       session_init_tools(&s->tools, shared_store, s->journal, s->mem,
                          s->ws, s->session_dir, cfg, provider);
@@ -1707,7 +1686,7 @@ int main(int argc, char **argv) {
             if (is_dir_empty(s->session_dir))
               rmdir(s->session_dir);
             free(s->session_dir);
-            s->session_dir = create_session_dir(nash_dir, s->name);
+            s->session_dir = create_session_dir(dirs->state_dir, s->name);
             s->journal = journal_new(s->session_dir);
             session_init_tools(&s->tools, shared_store, s->journal,
                                s->mem, s->ws, s->session_dir,
@@ -1729,7 +1708,7 @@ int main(int argc, char **argv) {
         snprintf(cmd_chk, sizeof(cmd_chk), "%s/inbox/cmd_new", mbox_dir);
         if (access(cmd_chk, F_OK) != 0) {
           /* No command pending -- check for due agents */
-          agent_run_due(nash_dir, shared_store, cfg,
+          agent_run_due(dirs->state_dir, shared_store, cfg,
                         provider, server_model,
                         NULL, NULL,
                         &shutdown_requested, mbox_dir);
@@ -1757,7 +1736,7 @@ int main(int argc, char **argv) {
             if (is_dir_empty(s->session_dir))
               rmdir(s->session_dir);
             free(s->session_dir);
-            s->session_dir = create_session_dir(nash_dir, s->name);
+            s->session_dir = create_session_dir(dirs->state_dir, s->name);
             s->journal = journal_new(s->session_dir);
             session_init_tools(&s->tools, shared_store, s->journal,
                                s->mem, s->ws, s->session_dir,
@@ -1821,7 +1800,7 @@ int main(int argc, char **argv) {
         int ws_iso = cfg->workspace_isolated ||
                      (cfg->workspace_global_recall == 0);
         double gw = cfg->workspace_global_weight;
-        s->ws = workspace_new(nash_dir, s->name, ws_iso, gw);
+        s->ws = workspace_new(dirs->data_dir, s->name, ws_iso, gw);
         s->mem = s->ws ? s->ws->global : NULL;
         if (server_model && s->mem)
           s->mem->model = xstrdup(server_model);
@@ -1831,7 +1810,7 @@ int main(int argc, char **argv) {
                                     cfg->recall_blend_semantic,
                                     cfg->recall_blend_substring,
                                     cfg->vscore_exponent);
-        s->session_dir = create_session_dir(nash_dir, s->name);
+        s->session_dir = create_session_dir(dirs->state_dir, s->name);
         s->journal = journal_new(s->session_dir);
         session_init_tools(&s->tools, shared_store, s->journal,
                            s->mem, s->ws, s->session_dir,
@@ -1928,7 +1907,7 @@ int main(int argc, char **argv) {
     }
     daemon_lock_release();
     web_search_cleanup();
-    cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+    cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
     return 0;
   }
 
@@ -1955,7 +1934,7 @@ int main(int argc, char **argv) {
     journal_t *journal;
     if (!session_dir) {
       /* Lazy session: directory created on first journal_append */
-      journal = journal_new_lazy(nash_dir, cfg->workspace);
+      journal = journal_new_lazy(dirs->config_dir, cfg->workspace);
       lazy_session = 1;
     } else {
       journal = journal_new(session_dir);
@@ -1970,11 +1949,11 @@ int main(int argc, char **argv) {
     char *result;
     if (mailbox_mode) {
       char mbox_dir[NASH_PATH_MAX];
-      if (mailbox_init(nash_dir, mbox_dir, sizeof(mbox_dir)) != 0) {
+      if (mailbox_init(dirs->state_dir, mbox_dir, sizeof(mbox_dir)) != 0) {
         fprintf(stderr, "[error] failed to initialize mailbox\n");
         session_cleanup(&tools, &react, journal);
         if (session_dir) free(session_dir);
-        cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+        cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
         return 1;
       }
       mailbox_ctx_t mbox = {
@@ -1986,12 +1965,12 @@ int main(int argc, char **argv) {
       fprintf(stderr, "[mailbox] enabled — questions in %s/outbox/, answers in %s/inbox/\n",
               mbox_dir, mbox_dir);
       /* Forward query to bridge before processing */
-      route_query_to_outbox(nash_dir, query,
+      route_query_to_outbox(dirs->state_dir, query,
                             ws && ws->name ? ws->name : NULL, NULL, 1);
       result = react_run(&react, query, mailbox_on_event, &mbox);
     } else {
       /* Forward query to bridge before processing */
-      route_query_to_outbox(nash_dir, query,
+      route_query_to_outbox(dirs->state_dir, query,
                             ws && ws->name ? ws->name : NULL, NULL, 1);
       result = react_run(&react, query, tui_on_event, NULL);
     }
@@ -2006,7 +1985,7 @@ int main(int argc, char **argv) {
     memory_prune(memory, cfg->prune_min_score, cfg->prune_min_evidence);
     int have_result = (result != NULL);
     /* Route result to outbox if a daemon (--matrix/--telegram) is running */
-    route_to_outbox(nash_dir, result,
+    route_to_outbox(dirs->state_dir, result,
                     ws && ws->name ? ws->name : NULL, NULL);
     if (result) {
       printf("%s\n", result);
@@ -2023,7 +2002,7 @@ int main(int argc, char **argv) {
       rmdir(session_dir);
     }
     if (session_dir) free(session_dir);
-    cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+    cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
     return have_result ? 0 : 1;
   }
 
@@ -2054,7 +2033,7 @@ int main(int argc, char **argv) {
     /* Interactive TUI needs session_dir immediately for journal display,
          * so always create it eagerly (lazy sessions break TUI rendering). */
     if (!session_dir) {
-      session_dir = create_session_dir(nash_dir, cfg->workspace);
+      session_dir = create_session_dir(dirs->config_dir, cfg->workspace);
     }
     journal_t *journal = journal_new(session_dir);
     tool_ctx_t tools;
@@ -2069,7 +2048,7 @@ int main(int argc, char **argv) {
 
     /* Create UI state and initialize TUI */
     ui_state_t *ui = ui_state_new(session_dir, shared_store);
-    ui->nash_dir = xstrdup(nash_dir); /* for /? cross-session search */
+    ui->dirs = dirs; /* for /? cross-session search and completion */
     if (ws && ws->name)
       ui->workspace_name = xstrdup(ws->name); /* for status bar breadcrumb */
     /* Pass model name + context info for nashell-style status bar */
@@ -2090,7 +2069,7 @@ int main(int argc, char **argv) {
       ui_state_set_status(ui, STATUS_READY, "Ready");
     }
     /* Set banner text for main pane */
-    char *banner = build_banner_string(cfg, props_json, nash_dir, session_dir, matched_profile_file);
+    char *banner = build_banner_string(cfg, props_json, dirs, session_dir, matched_profile_file);
     ui_state_set_banner(ui, banner);
     free(banner);
 
@@ -2137,7 +2116,7 @@ int main(int argc, char **argv) {
       char *auto_cmd = xstrdup(agent_cmd);
       command_ctx_t cmd_ctx = {
         .session_dir = session_dir,
-        .nash_dir = nash_dir,
+        .dirs = dirs,
         .tools = &tools,
         .react = &react,
         .ui = ui,
@@ -2188,7 +2167,7 @@ int main(int argc, char **argv) {
         }
 
         /* Route result to outbox if a daemon (--matrix/--telegram) is running */
-        route_to_outbox(nash_dir, pargs_tui.result_text,
+        route_to_outbox(dirs->state_dir, pargs_tui.result_text,
                         ws && ws->name ? ws->name : NULL,
                         pargs_tui.playbook ? pargs_tui.playbook->name : NULL);
 
@@ -2244,7 +2223,7 @@ int main(int argc, char **argv) {
         memory_prune(memory, cfg->prune_min_score, cfg->prune_min_evidence);
         char *result = iargs.result;
         /* Route result to outbox if a daemon (--matrix/--telegram) is running */
-        route_to_outbox(nash_dir, result,
+        route_to_outbox(dirs->state_dir, result,
                         ws && ws->name ? ws->name : NULL, NULL);
         pthread_mutex_lock(&ui->mtx);
         if (result) {
@@ -2385,7 +2364,7 @@ int main(int argc, char **argv) {
         {
           command_ctx_t cmd_ctx = {
             .session_dir = session_dir,
-            .nash_dir = nash_dir,
+            .dirs = dirs,
             .tools = &tools,
             .react = &react,
             .ui = ui,
@@ -2516,7 +2495,7 @@ int main(int argc, char **argv) {
                                    : NULL;
         free(submitted_query); /* strdup'd into final_query; ui_state_add_query also strdup'd */
         /* Forward query to bridge for session threading */
-        route_query_to_outbox(nash_dir, final_query,
+        route_query_to_outbox(dirs->state_dir, final_query,
                               ws && ws->name ? ws->name : NULL, NULL,
                               tools.react_loop == 0 ? 1 : 0);
         if (pthread_create(&infer_tid, NULL, infer_worker, &iargs) == 0) {
@@ -2659,6 +2638,6 @@ int main(int argc, char **argv) {
   printf("Bye.\n");
   web_search_cleanup();  /* tear down auto-started SearXNG container */
   tool_plugin_cleanup(); /* dlclose any loaded external plugins */
-  cleanup_globals(shared_store, ws, provider, nash_dir, props_json, server_model, cfg);
+  cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
   return 0;
 }

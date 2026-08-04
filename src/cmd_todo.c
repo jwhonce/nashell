@@ -118,7 +118,7 @@ static int cmd_todo_list_all(command_ctx_t *ctx) {
   /* Global todo */
   {
     char gpath[NASH_PATH_MAX];
-    snprintf(gpath, sizeof(gpath), "%s/todo.md", ctx->nash_dir);
+    snprintf(gpath, sizeof(gpath), "%s/todo.md", ctx->dirs->state_dir);
     if (access(gpath, F_OK) == 0) {
       str_append_cstr(&out, "## global\n\n");
       int go = 0, gd = 0;
@@ -137,7 +137,7 @@ static int cmd_todo_list_all(command_ctx_t *ctx) {
   /* Enumerate workspaces */
   {
     char ws_dir[NASH_PATH_MAX];
-    snprintf(ws_dir, sizeof(ws_dir), "%s/workspaces", ctx->nash_dir);
+    snprintf(ws_dir, sizeof(ws_dir), "%s/workspaces", ctx->dirs->state_dir);
     DIR *d = opendir(ws_dir);
     if (d) {
       struct dirent *ent;

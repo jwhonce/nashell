@@ -26,12 +26,12 @@ typedef struct {
 /* Compute completions for the current input buffer.
  * `buf` is the full input string (NUL-terminated), `len` is its length,
  * `cursor` is the cursor position (byte offset).
- * `nash_dir` is ~/.nash path for dynamic completions (may be NULL).
+ * `dirs` is resolved directory paths for dynamic completions (may be NULL).
  *
  * Returns a heap-allocated result.  Caller must free with completion_result_free().
  * Returns NULL if no completions are possible. */
 completion_result_t *completion_complete(const char *buf, int len, int cursor,
-                                         const char *nash_dir);
+                                         const nash_dirs_t *dirs);
 
 /* Free a completion result. */
 void completion_result_free(completion_result_t *r);

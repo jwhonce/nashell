@@ -3,6 +3,7 @@
 
 #include <pthread.h>
 #include "react_event.h"
+#include "dirs.h"
 #include "journal.h"
 #include "store.h"
 #include "md_render.h"
@@ -152,7 +153,7 @@ typedef struct {
 
   /* ── Cross-session scratchpad search ── */
   int search_active;    /* 1 = search results shown in main pane */
-  char *nash_dir;       /* ~/.nash (for finding sessions) */
+  const nash_dirs_t *dirs; /* resolved directories (for sessions, completion) */
   char *workspace_name; /* workspace name (NULL = global-only) */
 
   /* ── In-page text search (? prefix) ── */

@@ -16,7 +16,7 @@
  * use_ansi: 1 = include ANSI color codes (terminal), 0 = plain text (TUI).
  * session_dir: if non-NULL, appended as "[session: ...]" line. */
 char *build_banner_impl(const config_t *cfg, const char *props_json,
-                        const char *nash_dir, const char *session_dir,
+                        const nash_dirs_t *dirs, const char *session_dir,
                         const char *profile_file, int use_ansi) {
   str_t s = str_new(2048);
 
@@ -111,7 +111,14 @@ char *build_banner_impl(const config_t *cfg, const char *props_json,
               cfg->temperature, cfg->max_tokens,
               think_str,
               cfg->stream ? "on" : "off");
-  str_appendf(&s, "data:   %s\n", nash_dir);
+  if (dirs->xdg_mode) {
+    str_appendf(&s, "config: %s\n", dirs->config_dir);
+    str_appendf(&s, "data:   %s\n", dirs->data_dir);
+    str_appendf(&s, "state:  %s\n", dirs->state_dir);
+    str_appendf(&s, "cache:  %s\n", dirs->cache_dir);
+  } else {
+    str_appendf(&s, "data:   %s\n", dirs->data_dir);
+  }
   char cwd_buf[NASH_PATH_MAX];
   if (getcwd(cwd_buf, sizeof(cwd_buf)))
     str_appendf(&s, "cwd:    %s\n", cwd_buf);
@@ -127,8 +134,8 @@ char *build_banner_impl(const config_t *cfg, const char *props_json,
 
 /* Print banner to stdout with ANSI colors (CLI mode) */
 void print_banner(const config_t *cfg, const char *props_json,
-                  const char *nash_dir, const char *profile_file) {
-  char *banner = build_banner_impl(cfg, props_json, nash_dir, NULL,
+                  const nash_dirs_t *dirs, const char *profile_file) {
+  char *banner = build_banner_impl(cfg, props_json, dirs, NULL,
                                    profile_file, 1);
   fputs(banner, stdout);
   free(banner);
@@ -136,8 +143,8 @@ void print_banner(const config_t *cfg, const char *props_json,
 
 /* Build banner as a plain-text string for ncurses TUI */
 char *build_banner_string(const config_t *cfg, const char *props_json,
-                          const char *nash_dir, const char *session_dir,
+                          const nash_dirs_t *dirs, const char *session_dir,
                           const char *profile_file) {
-  return build_banner_impl(cfg, props_json, nash_dir, session_dir,
+  return build_banner_impl(cfg, props_json, dirs, session_dir,
                            profile_file, 0);
 }

@@ -19,7 +19,7 @@ LDFLAGS ?= -rdynamic -lcurl -lcrypto -lreadline -lncursesw -lpthread -lm -lutf8p
 NASH_DATADIR ?= /usr/share/nash
 CFLAGS  += -DNASH_DATADIR='"$(NASH_DATADIR)"'
 
-SRC     = src/main.c src/str.c src/cJSON.c \
+SRC     = src/main.c src/str.c src/cJSON.c src/dirs.c \
           src/journal.c src/store.c src/llm.c src/tools.c src/react.c \
           src/react_context.c \
           src/react_checkpoint.c src/react_reflection.c \
@@ -89,7 +89,7 @@ src/%.o: src/%.c $(HDRS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Library objects (everything except main.c for linking with tests)
-LIB_SRC = src/str.c src/cJSON.c src/journal.c src/store.c \
+LIB_SRC = src/str.c src/cJSON.c src/dirs.c src/journal.c src/store.c \
           src/llm.c src/tools.c src/react.c src/react_context.c \
           src/react_checkpoint.c \
           src/react_reflection.c \
@@ -156,7 +156,7 @@ TEST_BIN = tests/test_memory tests/test_store tests/test_config \
            tests/test_compress tests/test_semantic_scoring \
            tests/test_breadcrumbs tests/test_optimizer \
            tests/test_reflection tests/test_tool_plugin \
-           tests/test_tool_plugin_dlopen
+           tests/test_tool_plugin_dlopen tests/test_dirs
 
 # Sample plugin shared objects for dlopen testing
 SAMPLE_PLUGINS = tests/sample_plugin.so tests/sample_plugin_bad_abi.so \

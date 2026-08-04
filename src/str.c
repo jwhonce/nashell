@@ -302,25 +302,25 @@ int mkdir_p(const char *path, mode_t mode) {
   return 0;
 }
 
-/* Return sessions base directory, workspace-aware. */
-char *sessions_base_dir(const char *nash_dir, const char *workspace) {
+/* Return sessions base directory, workspace-aware.
+ * state_dir: base directory for session state (XDG state_dir or legacy ~/.nash). */
+char *sessions_base_dir(const char *state_dir, const char *workspace) {
   char buf[1024];
-  if (workspace && workspace[0]) {
-    snprintf(buf, sizeof(buf), "%s/workspaces/%s", nash_dir, workspace);
-    mkdir(buf, 0755); /* ensure workspace dir exists */
-    snprintf(buf, sizeof(buf), "%s/workspaces/%s/sessions", nash_dir, workspace);
-  } else {
-    snprintf(buf, sizeof(buf), "%s/sessions", nash_dir);
-  }
-  mkdir(buf, 0755);
+  if (workspace && workspace[0])
+    snprintf(buf, sizeof(buf), "%s/workspaces/%s/sessions", state_dir, workspace);
+  else
+    snprintf(buf, sizeof(buf), "%s/sessions", state_dir);
+  mkdir_p(buf, 0755);
   return xstrdup(buf);
 }
 
-char *create_session_dir(const char *nash_dir, const char *workspace) {
+/* Create a new session directory with epoch-based name.
+ * state_dir: base for sessions. cache_dir: base for temp files (NULL = /tmp/.nash). */
+char *create_session_dir(const char *state_dir, const char *workspace) {
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);
 
-  char *base = sessions_base_dir(nash_dir, workspace);
+  char *base = sessions_base_dir(state_dir, workspace);
 
   char epoch[64];
   snprintf(epoch, sizeof(epoch), "%ld.%05ld",
@@ -331,7 +331,7 @@ char *create_session_dir(const char *nash_dir, const char *workspace) {
   free(base);
   mkdir(path, 0755);
 
-  /* Pre-create session-scoped temporary directory under /tmp/.nash/ */
+  /* Pre-create session-scoped temporary directory */
   char tmpdir[1088];
   if (workspace && workspace[0])
     snprintf(tmpdir, sizeof(tmpdir), "/tmp/.nash/%s/%s", workspace, epoch);
