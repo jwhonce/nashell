@@ -157,7 +157,7 @@ tool_filter_t playbook_resolve_tools(const playbook_t *pb, int pass_idx,
 char *playbook_expand(const playbook_t *pb, const char *tmpl,
                       int pass_idx, const char *prev_result,
                       const char *memory_dir, const char *model,
-                      const char *session_dir, const char *nash_dir);
+                      const char *session_dir, const nash_dirs_t *dirs);
 
 /* List available playbooks from ~/.nash/playbooks/ */
 playbook_t **playbook_list(const char *nash_dir, int *count);

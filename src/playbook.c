@@ -402,7 +402,7 @@ static char *str_replace_all(const char *src, const char *key, const char *val) 
 char *playbook_expand(const playbook_t *pb, const char *tmpl,
                       int pass_idx, const char *prev_result,
                       const char *memory_dir, const char *model,
-                      const char *session_dir, const char *nash_dir) {
+                      const char *session_dir, const nash_dirs_t *dirs) {
   if (!tmpl) return xstrdup("");
 
   char *result = xstrdup(tmpl);
@@ -422,14 +422,19 @@ char *playbook_expand(const playbook_t *pb, const char *tmpl,
   if (!getcwd(cwdbuf, sizeof(cwdbuf)))
     snprintf(cwdbuf, sizeof(cwdbuf), ".");
 
-  /* Change 6: Load previous scratchpad from state dir */
+  /* Load previous scratchpad from state dir */
   char *prev_scratch_text = NULL;
-  if (nash_dir && pb->name) {
+  if (dirs && pb->name) {
     char sp_path[NASH_PATH_MAX];
     snprintf(sp_path, sizeof(sp_path), "%s/playbooks/.state/%s/scratchpad.md",
-             nash_dir, pb->name);
+             dirs->state_dir, pb->name);
     prev_scratch_text = slurp_file(sp_path, NULL);
   }
+
+  const char *d_config = dirs ? dirs->config_dir : "";
+  const char *d_data = dirs ? dirs->data_dir : "";
+  const char *d_state = dirs ? dirs->state_dir : "";
+  const char *d_cache = dirs ? dirs->cache_dir : "";
 
   struct {
     const char *key;
@@ -438,7 +443,11 @@ char *playbook_expand(const playbook_t *pb, const char *tmpl,
     {"memory_dir", memory_dir ? memory_dir : ""},
     {"model", model ? model : "unknown"},
     {"session_dir", session_dir ? session_dir : ""},
-    {"nash_dir", nash_dir ? nash_dir : ""},
+    {"nash_dir", d_data},
+    {"config_dir", d_config},
+    {"data_dir", d_data},
+    {"state_dir", d_state},
+    {"cache_dir", d_cache},
     {"cwd", cwdbuf},
     {"date", datebuf},
     {"pass_number", pass_num},
@@ -613,7 +622,8 @@ int playbook_validate(const playbook_t *pb, char *errbuf, size_t errlen) {
 
   /* Known built-in template variables (playbook + agent-injected) */
   static const char *builtins[] = {
-    "memory_dir", "model", "session_dir", "nash_dir", "cwd", "date",
+    "memory_dir", "model", "session_dir", "nash_dir",
+    "config_dir", "data_dir", "state_dir", "cache_dir", "cwd", "date",
     "pass_number", "total_passes", "prev_result", "prev_scratchpad",
     "workspace_name", "workspace_dir", "agent_id", "arguments",
     NULL};
@@ -950,7 +960,7 @@ void *playbook_worker(void *arg) {
       char *prompt = playbook_expand(pb, pb->passes[pass].prompt_template,
                                      pass, prev_result,
                                      mdir, model,
-                                     NULL, pa->dirs->state_dir);
+                                     NULL, pa->dirs);
 
       /* playbook_expand returns NULL when required {{argN}} variables
          * are missing — abort the playbook with a clear error. */
@@ -1066,7 +1076,7 @@ void *playbook_worker(void *arg) {
         char *safe_prev = shell_escape_value(prev_result);
         char *expanded_cmd = playbook_expand(pb,
                                              pb->passes[pass].command ? pb->passes[pass].command : "",
-                                             pass, safe_prev, mdir, model, NULL, pa->dirs->state_dir);
+                                             pass, safe_prev, mdir, model, NULL, pa->dirs);
         free(safe_prev);
         if (expanded_cmd && expanded_cmd[0]) {
           if (pa->ui) {
@@ -1212,7 +1222,7 @@ void *playbook_worker(void *arg) {
           char *safe_prev = shell_escape_value(prev_result);
           char *expanded_cmd = playbook_expand(pb,
                                                pb->passes[pass].command ? pb->passes[pass].command : "",
-                                               pass, safe_prev, mdir, model, NULL, pa->dirs->state_dir);
+                                               pass, safe_prev, mdir, model, NULL, pa->dirs);
           free(safe_prev);
           if (expanded_cmd && expanded_cmd[0]) {
             char popen_cmd[NASH_PATH_MAX * 2 + 8];
