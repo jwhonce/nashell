@@ -4,7 +4,9 @@ nash
 *.tar.gz
 *.tar.zst
 libnash.so*
+libnash*.dylib
 tests/*.so
+tests/*.dylib
 tests/test_tool_plugin
 tests/test_tool_plugin_dlopen
 cscope.out
@@ -48,6 +50,7 @@ fixed_point_sin
 fixed_point_sin.c
 
 # Editor/IDE
+.clangd
 *.swp
 *.swo
 *~

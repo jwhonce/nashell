@@ -2,11 +2,11 @@
 #include "nash_limits.h"
 #include "nash_log.h"
 #include "str.h"
+#include "fswatch.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/inotify.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <time.h>
@@ -101,48 +101,17 @@ char *mailbox_ask(const char *mailbox_dir, const char *question, int timeout_sec
   answer = read_file(answer_file);
   if (answer) goto got_answer;
 
-  /* Set up inotify */
-  int ifd = inotify_init1(IN_NONBLOCK);
-  if (ifd < 0) {
-    nash_log("[mailbox] inotify_init failed: %s, falling back to poll",
-             strerror(errno));
-    /* Fallback: poll with stat() every second */
-    time_t deadline = timeout_sec > 0 ? time(NULL) + timeout_sec : 0;
-    while (1) {
-      answer = read_file(answer_file);
-      if (answer) goto got_answer;
-      if (deadline > 0 && time(NULL) >= deadline) {
-        nash_log("[mailbox] timeout waiting for answer");
-        return NULL;
-      }
-      sleep(1);
-    }
-  }
+  fswatch_t *fw = fswatch_init();
+  if (fw) fswatch_add(fw, inbox_dir);
 
-  int wd = inotify_add_watch(ifd, inbox_dir, IN_CREATE | IN_MOVED_TO);
-  if (wd < 0) {
-    nash_log("[mailbox] inotify_add_watch failed: %s",
-             strerror(errno));
-    close(ifd);
-    return NULL;
-  }
-
-  /* Re-check after adding watch (close race window — read directly) */
   answer = read_file(answer_file);
   if (answer) {
-    inotify_rm_watch(ifd, wd);
-    close(ifd);
+    fswatch_close(fw);
     goto got_answer;
   }
 
-  /* Poll loop with timeout */
   {
-    struct pollfd pfd = {.fd = ifd, .events = POLLIN};
     time_t start = time(NULL);
-
-    char expected_name[256];
-    snprintf(expected_name, sizeof(expected_name), "ask_%s", msg_id);
-
     while (1) {
       int remaining_ms = -1;
       if (timeout_sec > 0) {
@@ -151,58 +120,26 @@ char *mailbox_ask(const char *mailbox_dir, const char *question, int timeout_sec
         remaining_ms = remaining_sec > 0 ? (int)(remaining_sec > 2000000 ? 2000000000 : remaining_sec * 1000) : 0;
         if (remaining_ms <= 0) {
           nash_log("[mailbox] timeout waiting for answer");
-          inotify_rm_watch(ifd, wd);
-          close(ifd);
+          fswatch_close(fw);
           return NULL;
         }
       }
 
-      int ret = poll(&pfd, 1, remaining_ms > 0 ? remaining_ms : 5000);
-      if (ret < 0) {
-        if (errno == EINTR) break; /* signal received — let caller check shutdown */
+      int ret = fw ? fswatch_wait(fw, remaining_ms > 0 ? remaining_ms : 5000) : 1;
+      if (ret < 0)
         break;
-      }
 
-      if (ret > 0) {
-        /* Drain inotify events */
-        char evbuf[NASH_PATH_MAX]
-          __attribute__((aligned(__alignof__(struct inotify_event))));
-        ssize_t len = read(ifd, evbuf, sizeof(evbuf));
-        if (len > 0) {
-          for (char *ptr = evbuf; ptr < evbuf + len;) {
-            struct inotify_event *iev = (struct inotify_event *)ptr;
-            if (iev->len > 0 &&
-                strcmp(iev->name, expected_name) == 0) {
-              inotify_rm_watch(ifd, wd);
-              close(ifd);
-              goto read_answer;
-            }
-            ptr += sizeof(struct inotify_event) + iev->len;
-          }
-        }
-      }
-
-      /* Periodic check (handles edge cases — read directly, no TOCTOU) */
       answer = read_file(answer_file);
       if (answer) {
-        inotify_rm_watch(ifd, wd);
-        close(ifd);
+        fswatch_close(fw);
         goto got_answer;
       }
+
+      if (!fw) sleep(1);
     }
-    inotify_rm_watch(ifd, wd);
-    close(ifd);
+    fswatch_close(fw);
   }
   return NULL;
-
-read_answer:
-  /* Answer is just plain text — the entire file content IS the answer */
-  answer = read_file(answer_file);
-  if (!answer) {
-    nash_log("[mailbox] failed to read answer file: %s",
-             answer_file);
-    return NULL;
-  }
 
 got_answer:
   /* Clean up processed files */
@@ -296,24 +233,11 @@ char *mailbox_wait_task(const char *mailbox_dir, char **task_id_out,
     closedir(dir);
   }
 
-  /* No existing tasks — watch with inotify */
-  int ifd = inotify_init1(IN_NONBLOCK);
-  if (ifd < 0) {
-    nash_log("[mailbox] inotify_init failed: %s", strerror(errno));
-    return NULL;
-  }
-
-  int wd = inotify_add_watch(ifd, inbox_dir, IN_CREATE | IN_MOVED_TO);
-  if (wd < 0) {
-    nash_log("[mailbox] inotify_add_watch failed: %s",
-             strerror(errno));
-    close(ifd);
-    return NULL;
-  }
+  fswatch_t *fw = fswatch_init();
+  if (fw) fswatch_add(fw, inbox_dir);
 
   nash_log("[mailbox] daemon: watching %s for tasks...", inbox_dir);
 
-  struct pollfd pfd = {.fd = ifd, .events = POLLIN};
   time_t start = time(NULL);
 
   while (1) {
@@ -324,56 +248,12 @@ char *mailbox_wait_task(const char *mailbox_dir, char **task_id_out,
       if (remaining_ms <= 0) break;
     }
 
-    int ret = poll(&pfd, 1, remaining_ms > 0 ? remaining_ms : 5000);
-    if (ret < 0) {
-      if (errno == EINTR) break; /* signal received — let caller check shutdown */
+    int ret = fw ? fswatch_wait(fw, remaining_ms > 0 ? remaining_ms : 5000) : 1;
+    if (ret < 0)
       break;
-    }
 
-    if (ret > 0) {
-      char evbuf[NASH_PATH_MAX]
-        __attribute__((aligned(__alignof__(struct inotify_event))));
-      ssize_t len = read(ifd, evbuf, sizeof(evbuf));
-      if (len > 0) {
-        for (char *ptr = evbuf; ptr < evbuf + len;) {
-          struct inotify_event *iev = (struct inotify_event *)ptr;
-          if (iev->len > 0 &&
-              strncmp(iev->name, "cmd_", 4) == 0 &&
-              !strstr(iev->name, ".tmp")) {
-            /* Command file detected — return NULL to let
-                         * the daemon loop handle it. */
-            inotify_rm_watch(ifd, wd);
-            close(ifd);
-            return NULL;
-          }
-          if (iev->len > 0 &&
-              strncmp(iev->name, "task_", 5) == 0 &&
-              !strstr(iev->name, ".tmp")) {
-            char path[NASH_PATH_MAX];
-            if ((size_t)snprintf(path, sizeof(path), "%s/%s",
-                                 inbox_dir, iev->name) >= sizeof(path))
-              continue;
-            /* Small delay for atomic write */
-            usleep(50000);
-            char *query = read_file(path);
-            if (query) {
-              char *tid = xstrdup(iev->name + 5);
-              unlink(path);
-              inotify_rm_watch(ifd, wd);
-              close(ifd);
-              if (task_id_out)
-                *task_id_out = tid;
-              else
-                free(tid);
-              return query;
-            }
-          }
-          ptr += sizeof(struct inotify_event) + iev->len;
-        }
-      }
-    }
+    usleep(50000);
 
-    /* Periodic directory scan (handles edge cases) */
     dir = opendir(inbox_dir);
     if (dir) {
       struct dirent *de;
@@ -387,11 +267,11 @@ char *mailbox_wait_task(const char *mailbox_dir, char **task_id_out,
       }
       closedir(dir);
       if (has_cmd) {
-        inotify_rm_watch(ifd, wd);
-        close(ifd);
+        fswatch_close(fw);
         return NULL;
       }
     }
+
     dir = opendir(inbox_dir);
     if (dir) {
       struct dirent *de;
@@ -406,8 +286,7 @@ char *mailbox_wait_task(const char *mailbox_dir, char **task_id_out,
           char *tid = xstrdup(de->d_name + 5);
           unlink(path);
           closedir(dir);
-          inotify_rm_watch(ifd, wd);
-          close(ifd);
+          fswatch_close(fw);
           if (task_id_out)
             *task_id_out = tid;
           else
@@ -417,10 +296,11 @@ char *mailbox_wait_task(const char *mailbox_dir, char **task_id_out,
       }
       closedir(dir);
     }
+
+    if (!fw) sleep(1);
   }
 
-  inotify_rm_watch(ifd, wd);
-  close(ifd);
+  fswatch_close(fw);
   return NULL;
 }
 

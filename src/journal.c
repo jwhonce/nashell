@@ -10,7 +10,8 @@
 #include <sys/types.h>
 #include <time.h>
 #include <sys/file.h> /* flock */
-#include <unistd.h>   /* fdatasync, fileno */
+#include <fcntl.h>
+#include <unistd.h>
 
 /* Recursively unwrap nested JSON in a thought string.
  * The LLM sometimes echoes its own previous response as a thought,
@@ -174,7 +175,13 @@ int journal_append(journal_t *j, int react_loop, int step, const char *tool,
   free(json);
   cJSON_Delete(entry);
   fflush(f);
+#if defined(__linux__)
   fdatasync(fileno(f));
+#elif defined(__APPLE__)
+  fcntl(fileno(f), F_FULLFSYNC);
+#else
+  #error "Unsupported platform"
+#endif
   fclose(f);
   pthread_mutex_unlock(&j->mtx); /* FIX CRIT2 */
   return 0;

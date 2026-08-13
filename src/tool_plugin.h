@@ -4,9 +4,10 @@
  * Works for both statically linked tools and dlopen'd external plugins.
  *
  * Static tools: compiled into the nash binary, constructor runs before main().
- * External plugins: shared objects (.so) loaded via tool_plugin_load() or
- *   tool_plugin_load_dir().  dlopen() triggers their constructors, which
- *   call tool_plugin_register() to self-register into the same registry.
+ * External plugins: shared objects (.so on Linux, .dylib on macOS) loaded
+ *   via tool_plugin_load() or tool_plugin_load_dir().  dlopen() triggers
+ *   their constructors, which call tool_plugin_register() to self-register
+ *   into the same registry.
  *
  * ABI versioning: TOOL_PLUGIN_ABI_VERSION is embedded into every plugin
  * descriptor.  The registry rejects plugins built against a different ABI.

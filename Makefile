@@ -1,7 +1,86 @@
 VERSION ?= 0.1.2
 
-CC      ?= gcc
-CFLAGS  ?= -Wall -g -Wextra -Wunused-function -O2 -std=c11 -fPIC -D_POSIX_C_SOURCE=200809L -D_DEFAULT_SOURCE
+# ── Platform detection ────────────────────────────────────────
+UNAME_S := $(shell uname -s)
+
+ifeq ($(UNAME_S),Linux)
+  CC      ?= gcc
+  PLATFORM_DEFINES = -D_DEFAULT_SOURCE
+  NCURSES_LIB      = -lncursesw
+  DL_LIB           = -ldl
+  SHARED_EXT       = so
+  SHARED_FLAG      = -shared
+  SONAME_FLAG      = -Wl,-soname,$(LIB_SONAME)
+  RPATH_ORIGIN     = $$ORIGIN
+  EXPORT_DYNAMIC   = -rdynamic
+  PLUGIN_EXT       = so
+  BREW_CFLAGS      =
+  BREW_LDFLAGS     =
+else ifeq ($(UNAME_S),Darwin)
+  # Homebrew GCC is required — Apple Clang is not supported.
+  # Auto-detect the highest-versioned gcc-NN in Homebrew's gcc prefix.
+  BREW_GCC_PREFIX := $(shell brew --prefix gcc 2>/dev/null)
+  ifeq ($(BREW_GCC_PREFIX),)
+    $(error Homebrew GCC not found — install with: brew install gcc)
+  endif
+  CC := $(shell ls $(BREW_GCC_PREFIX)/bin/gcc-[0-9][0-9] 2>/dev/null | sort -V | tail -1)
+  ifeq ($(CC),)
+    $(error No gcc-NN binary found in $(BREW_GCC_PREFIX)/bin/)
+  endif
+  PLATFORM_DEFINES = -D_DARWIN_C_SOURCE
+  NCURSES_LIB      = -lncurses
+  DL_LIB           =
+  SHARED_EXT       = dylib
+  SHARED_FLAG      = -dynamiclib
+  RPATH_ORIGIN     = @loader_path
+  # Plugins link against libnash directly (-L. -lnash), so -rdynamic is not needed
+  EXPORT_DYNAMIC   =
+  PLUGIN_EXT       = dylib
+  # Auto-detect Homebrew paths for keg-only packages
+  BREW_PREFIX      := $(shell brew --prefix 2>/dev/null)
+  ifneq ($(BREW_PREFIX),)
+    BREW_NCURSES   := $(shell brew --prefix ncurses 2>/dev/null)
+    BREW_READLINE  := $(shell brew --prefix readline 2>/dev/null)
+    BREW_OPENSSL   := $(shell brew --prefix openssl 2>/dev/null)
+    BREW_UTF8PROC  := $(shell brew --prefix utf8proc 2>/dev/null)
+    BREW_ONNX     := $(shell brew --prefix onnxruntime 2>/dev/null)
+    BREW_CFLAGS    = $(if $(BREW_NCURSES),-I$(BREW_NCURSES)/include) \
+                     $(if $(BREW_READLINE),-I$(BREW_READLINE)/include) \
+                     $(if $(BREW_OPENSSL),-I$(BREW_OPENSSL)/include) \
+                     $(if $(BREW_UTF8PROC),-I$(BREW_UTF8PROC)/include) \
+                     $(if $(BREW_ONNX),-I$(BREW_ONNX)/include)
+    BREW_LDFLAGS   = $(if $(BREW_NCURSES),-L$(BREW_NCURSES)/lib) \
+                     $(if $(BREW_READLINE),-L$(BREW_READLINE)/lib) \
+                     $(if $(BREW_OPENSSL),-L$(BREW_OPENSSL)/lib) \
+                     $(if $(BREW_UTF8PROC),-L$(BREW_UTF8PROC)/lib) \
+                     $(if $(BREW_ONNX),-L$(BREW_ONNX)/lib)
+  else
+    BREW_CFLAGS    =
+    BREW_LDFLAGS   =
+  endif
+else
+  $(error Unsupported platform: $(UNAME_S) — requires Linux or Darwin)
+endif
+
+# Library names: Linux uses libnash.so.X.Y.Z, macOS uses libnash.X.Y.Z.dylib
+ifeq ($(UNAME_S),Linux)
+  LIB_REAL   = libnash.$(SHARED_EXT).$(VERSION)
+  LIB_SONAME = libnash.$(SHARED_EXT).0
+  LIB_LINKER = libnash.$(SHARED_EXT)
+  SONAME_FLAG = -Wl,-soname,$(LIB_SONAME)
+else ifeq ($(UNAME_S),Darwin)
+  LIB_REAL   = libnash.$(VERSION).$(SHARED_EXT)
+  LIB_SONAME = libnash.0.$(SHARED_EXT)
+  LIB_LINKER = libnash.$(SHARED_EXT)
+  SONAME_FLAG = -Wl,-install_name,@rpath/$(LIB_LINKER)
+endif
+
+RPATH_FLAG        = -Wl,-rpath,'$(RPATH_ORIGIN)'
+RPATH_PARENT_FLAG = -Wl,-rpath,'$(RPATH_ORIGIN)/..'
+# ── End platform detection ────────────────────────────────────
+
+CFLAGS  ?= -Wall -g -Wextra -Wunused-function -O2 -std=c11 -fPIC -D_POSIX_C_SOURCE=200809L $(PLATFORM_DEFINES)
+CFLAGS  += $(BREW_CFLAGS)
 # ONNX Runtime: requires onnxruntime-devel (headers) to build.
 # For linking, use pip-installed libonnxruntime if no system package.
 ORT_LIB := $(shell python3 -c "import onnxruntime; import os; print(os.path.dirname(onnxruntime.__file__) + '/capi')" 2>/dev/null)
@@ -13,7 +92,7 @@ endif
 
 # Device subsystem (VNC, HEVC streaming, Tesseract OCR) is now a separate
 # plugin: nash-tool-device-control.  See ~/agents/nash-tool-device-control/
-LDFLAGS ?= -rdynamic -lcurl -lcrypto -lreadline -lncursesw -lpthread -lm -lutf8proc -ldl $(ORT_LDFLAGS)
+LDFLAGS ?= $(EXPORT_DYNAMIC) -lcurl -lcrypto -lreadline $(NCURSES_LIB) -lpthread -lm -lutf8proc $(DL_LIB) $(BREW_LDFLAGS) $(ORT_LDFLAGS)
 
 # Default data directory (playbooks, etc.) -- /usr/share/nash for installed builds
 NASH_DATADIR ?= /usr/share/nash
@@ -70,13 +149,10 @@ SRC     = src/main.c src/str.c src/cJSON.c \
           src/completion.c \
           src/subprocess.c \
           src/tool_plugin.c \
+          src/fswatch.c \
           src/setup.c
 OBJ     = $(SRC:.c=.o)
 BIN     = nash
-
-LIB_REAL    = libnash.so.$(VERSION)
-LIB_SONAME  = libnash.so.0
-LIB_LINKER  = libnash.so
 
 all: $(LIB_REAL) $(BIN)
 
@@ -135,18 +211,19 @@ LIB_SRC = src/str.c src/cJSON.c src/journal.c src/store.c \
           src/completion.c \
           src/subprocess.c \
           src/tool_plugin.c \
+          src/fswatch.c \
           src/setup.c
 LIB_OBJ = $(LIB_SRC:.c=.o)
 
 # Shared library: everything except main.c
 $(LIB_REAL): $(LIB_OBJ)
-	$(CC) -shared -Wl,-soname,$(LIB_SONAME) -o $@ $^ $(LDFLAGS)
+	$(CC) $(SHARED_FLAG) $(SONAME_FLAG) -o $@ $^ $(LDFLAGS)
 	ln -sf $(LIB_REAL) $(LIB_SONAME)
 	ln -sf $(LIB_SONAME) $(LIB_LINKER)
 
-# Binary: main.o links against libnash.so
+# Binary: main.o links against libnash
 $(BIN): src/main.o $(LIB_REAL)
-	$(CC) $(CFLAGS) -o $@ $< -L. -lnash -Wl,-rpath,'$$ORIGIN' $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $< -L. -lnash $(RPATH_FLAG) $(LDFLAGS)
 
 # Test binaries
 TEST_BIN = tests/test_memory tests/test_store tests/test_config \
@@ -159,18 +236,18 @@ TEST_BIN = tests/test_memory tests/test_store tests/test_config \
            tests/test_tool_plugin_dlopen
 
 # Sample plugin shared objects for dlopen testing
-SAMPLE_PLUGINS = tests/sample_plugin.so tests/sample_plugin_bad_abi.so \
-                 tests/sample_plugin_multi.so
+SAMPLE_PLUGINS = tests/sample_plugin.$(PLUGIN_EXT) tests/sample_plugin_bad_abi.$(PLUGIN_EXT) \
+                 tests/sample_plugin_multi.$(PLUGIN_EXT)
 
-tests/sample_%.so: tests/sample_%.c src/tool_plugin.h src/cJSON.h $(LIB_REAL)
-	$(CC) -shared -fPIC $(CFLAGS) -I src -o $@ $< -L. -lnash
+tests/sample_%.$(PLUGIN_EXT): tests/sample_%.c src/tool_plugin.h src/cJSON.h $(LIB_REAL)
+	$(CC) $(SHARED_FLAG) -fPIC $(CFLAGS) -I src -o $@ $< -L. -lnash
 
-# dlopen test depends on sample .so files
+# dlopen test depends on sample plugin files
 tests/test_tool_plugin_dlopen: tests/test_tool_plugin_dlopen.c $(LIB_REAL) $(SAMPLE_PLUGINS)
-	$(CC) $(CFLAGS) -I src -o $@ $< -L. -lnash -Wl,-rpath,'$$ORIGIN/..' $(LDFLAGS)
+	$(CC) $(CFLAGS) -I src -o $@ $< -L. -lnash $(RPATH_PARENT_FLAG) $(LDFLAGS)
 
 tests/test_%: tests/test_%.c $(LIB_REAL)
-	$(CC) $(CFLAGS) -I src -o $@ $< -L. -lnash -Wl,-rpath,'$$ORIGIN/..' $(LDFLAGS)
+	$(CC) $(CFLAGS) -I src -o $@ $< -L. -lnash $(RPATH_PARENT_FLAG) $(LDFLAGS)
 
 test: $(TEST_BIN)
 	@echo "=== Running tests ==="
@@ -183,6 +260,7 @@ test: $(TEST_BIN)
 
 clean:
 	rm -f $(OBJ) $(BIN) $(LIB_REAL) $(LIB_SONAME) $(LIB_LINKER) $(TEST_BIN) $(SAMPLE_PLUGINS)
+	rm -f libnash.so* libnash*.dylib
 	rm -rf tests/plugin_dir
 
 # Source tarball for RPM builds (matches spec Source0: nash-VERSION.tar.zst)

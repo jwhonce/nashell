@@ -13,22 +13,32 @@
  *   watching, using a short sync timeout to multiplex both.
  */
 
+/* memset_s requires __STDC_WANT_LIB_EXT1__ before any standard header;
+ * used by the explicit_bzero shim below on macOS. */
+#if defined(__APPLE__)
+#define __STDC_WANT_LIB_EXT1__ 1
+#endif
 #include "matrix.h"
 #include "mailbox.h"
 #include "nash_limits.h"
 #include "str.h"
 #include "cJSON.h"
 #include "toml.h"
+#include "fswatch.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h> /* strcasecmp */
+#if defined(__APPLE__)
+static inline void explicit_bzero(void *buf, size_t len) {
+  memset_s(buf, len, 0, len);
+}
+#endif
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
 #include <sys/stat.h>
-#include <sys/inotify.h>
 #include <dirent.h>
 #include <poll.h>
 #include <curl/curl.h>
@@ -2383,22 +2393,11 @@ void *matrix_run(void *arg) {
     }
   }
 
-  /* Set up inotify on outbox */
   char outbox_path[512];
   snprintf(outbox_path, sizeof(outbox_path), "%s/outbox", ctx->mailbox_dir);
 
-  int ifd = inotify_init1(IN_NONBLOCK);
-  int iwd = -1;
-  if (ifd >= 0) {
-    iwd = inotify_add_watch(ifd, outbox_path, IN_CREATE | IN_MOVED_TO);
-    if (iwd < 0) {
-      fprintf(stderr, "[matrix] inotify_add_watch failed: %s\n",
-              strerror(errno));
-    }
-  } else {
-    fprintf(stderr, "[matrix] inotify_init failed: %s (will use polling)\n",
-            strerror(errno));
-  }
+  fswatch_t *fw = fswatch_init();
+  if (fw) fswatch_add(fw, outbox_path);
 
   /* Pending ask ID and room for routing replies as answers */
   char pending_ask_id[128] = {0};
@@ -2714,53 +2713,46 @@ void *matrix_run(void *arg) {
     if (*ctx->shutdown) break;
 
     /* ── Phase 2: Check outbox ────────────────────────────── */
-    if (ifd >= 0) {
-      char evbuf[NASH_PATH_MAX]
-        __attribute__((aligned(__alignof__(struct inotify_event))));
-      ssize_t nread = read(ifd, evbuf, sizeof(evbuf));
-      if (nread > 0) {
-        usleep(50000); /* 50ms for atomic writes to complete */
-        char *ptr = evbuf;
-        while (ptr < evbuf + nread) {
-          struct inotify_event *iev = (struct inotify_event *)ptr;
-          if (iev->len > 0 && iev->name[0] != '.') {
-            /* Track ask_* files for pending ask routing.
-                         * Read route_token from ask file to know which
-                         * room to send the answer acknowledgment to. */
-            if (strncmp(iev->name, "ask_", 4) == 0) {
-              size_t nlen = strlen(iev->name);
-              if (nlen < sizeof(pending_ask_id)) {
-                snprintf(pending_ask_id, sizeof(pending_ask_id),
-                         "%s", iev->name + 4);
-                pending_ask_time = time(NULL);
-              }
-              /* Read route_token from ask file before
-                             * it gets unlinked by process_outbox */
-              char askpath[512];
-              snprintf(askpath, sizeof(askpath),
-                       "%s/outbox/%s", ctx->mailbox_dir,
-                       iev->name);
-              char *ask_data = slurp_file(askpath, NULL);
-              if (ask_data) {
-                char *ask_rt = NULL;
-                mailbox_parse_headers(ask_data, NULL, &ask_rt, NULL);
-                if (ask_rt && ask_rt[0]) {
-                  snprintf(pending_ask_room,
-                           sizeof(pending_ask_room),
-                           "%s", ask_rt);
-                } else {
-                  pending_ask_room[0] = '\0';
-                }
-                free(ask_rt);
-                free(ask_data);
-              }
+    if (fw && fswatch_wait(fw, 0) > 0) {
+      usleep(50000);
+
+      /* Pre-scan: track ask_* files for pending ask routing */
+      {
+        char ob[512];
+        snprintf(ob, sizeof(ob), "%s/outbox", ctx->mailbox_dir);
+        DIR *odir = opendir(ob);
+        if (odir) {
+          struct dirent *ode;
+          while ((ode = readdir(odir)) != NULL) {
+            if (strncmp(ode->d_name, "ask_", 4) != 0) continue;
+            size_t nlen = strlen(ode->d_name);
+            if (nlen < sizeof(pending_ask_id)) {
+              snprintf(pending_ask_id, sizeof(pending_ask_id),
+                       "%s", ode->d_name + 4);
+              pending_ask_time = time(NULL);
             }
-            mx_process_outbox_file(ctx, iev->name);
+            char askpath[512];
+            snprintf(askpath, sizeof(askpath),
+                     "%s/outbox/%s", ctx->mailbox_dir, ode->d_name);
+            char *ask_data = slurp_file(askpath, NULL);
+            if (ask_data) {
+              char *ask_rt = NULL;
+              mailbox_parse_headers(ask_data, NULL, &ask_rt, NULL);
+              if (ask_rt && ask_rt[0]) {
+                snprintf(pending_ask_room, sizeof(pending_ask_room),
+                         "%s", ask_rt);
+              } else {
+                pending_ask_room[0] = '\0';
+              }
+              free(ask_rt);
+              free(ask_data);
+            }
           }
-          ptr += sizeof(struct inotify_event) + iev->len;
+          closedir(odir);
         }
       }
-    } else {
+      mx_scan_outbox(ctx);
+    } else if (!fw) {
       mx_scan_outbox(ctx);
     }
 
@@ -2781,8 +2773,7 @@ void *matrix_run(void *arg) {
   mx_api_send_message(ctx, "🔴 Nash bot going offline", NULL);
 
   /* Cleanup */
-  if (iwd >= 0) inotify_rm_watch(ifd, iwd);
-  if (ifd >= 0) close(ifd);
+  fswatch_close(fw);
 
   /* Save final since_token */
   mx_config_save(ctx);

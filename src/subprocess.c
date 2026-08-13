@@ -31,9 +31,13 @@ static void scrub_env(void) {
 /* ── close all FDs above stderr (except keep_fd if >= 0) ─────────── */
 
 static void close_extra_fds(int keep_fd) {
-  /* Prefer iterating /proc/self/fd for O(open_fds) instead of
-     * O(sysconf(_SC_OPEN_MAX)) which can be up to 1M close() calls. */
+#if defined(__linux__)
   DIR *dp = opendir("/proc/self/fd");
+#elif defined(__APPLE__)
+  DIR *dp = opendir("/dev/fd");
+#else
+  #error "Unsupported platform"
+#endif
   if (dp) {
     int dir_fd = dirfd(dp);
     struct dirent *de;
@@ -110,7 +114,15 @@ subprocess_result_t subprocess_run(char *const argv[],
   subprocess_result_t r = {.exit_code = -1};
 
   int pipefd[2];
+#if defined(__linux__)
   if (pipe2(pipefd, O_CLOEXEC) < 0) return r;
+#elif defined(__APPLE__)
+  if (pipe(pipefd) < 0) return r;
+  fcntl(pipefd[0], F_SETFD, FD_CLOEXEC);
+  fcntl(pipefd[1], F_SETFD, FD_CLOEXEC);
+#else
+  #error "Unsupported platform"
+#endif
 
   pid_t pid = fork();
   if (pid < 0) {

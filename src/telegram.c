@@ -21,6 +21,7 @@
 #include "str.h"
 #include "cJSON.h"
 #include "toml.h"
+#include "fswatch.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +30,6 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/stat.h>
-#include <sys/inotify.h>
 #include <dirent.h>
 #include <poll.h>
 #include <curl/curl.h>
@@ -1388,22 +1388,11 @@ void *telegram_run(void *arg) {
 
   fprintf(stderr, "[telegram] bridge thread started\n");
 
-  /* Set up inotify on outbox */
   char outbox_path[512];
   snprintf(outbox_path, sizeof(outbox_path), "%s/outbox", ctx->mailbox_dir);
 
-  int ifd = inotify_init1(IN_NONBLOCK);
-  int iwd = -1;
-  if (ifd >= 0) {
-    iwd = inotify_add_watch(ifd, outbox_path, IN_CREATE | IN_MOVED_TO);
-    if (iwd < 0) {
-      fprintf(stderr, "[telegram] inotify_add_watch failed: %s\n",
-              strerror(errno));
-    }
-  } else {
-    fprintf(stderr, "[telegram] inotify_init failed: %s (will use polling)\n",
-            strerror(errno));
-  }
+  fswatch_t *fw = fswatch_init();
+  if (fw) fswatch_add(fw, outbox_path);
 
   /* Process any existing outbox files */
   tg_scan_outbox(ctx);
@@ -1690,28 +1679,10 @@ void *telegram_run(void *arg) {
     if (*ctx->shutdown) break;
 
     /* ── Phase 2: Check outbox for results/questions ─────────── */
-    if (ifd >= 0) {
-      /* Read inotify events (non-blocking) */
-      char evbuf[NASH_PATH_MAX]
-        __attribute__((aligned(__alignof__(struct inotify_event))));
-      ssize_t nread = read(ifd, evbuf, sizeof(evbuf));
-      if (nread > 0) {
-        /* Small delay to let atomic writes complete */
-        usleep(50000); /* 50ms */
-        char *ptr = evbuf;
-        while (ptr < evbuf + nread) {
-          struct inotify_event *ev = (struct inotify_event *)ptr;
-          if (ev->len > 0 && ev->name[0] != '.') {
-            /* tg_process_outbox_file handles ask_* detection
-                         * and sets ctx->pending_ask_id with the correct
-                         * thread_id for per-topic routing. */
-            tg_process_outbox_file(ctx, ev->name);
-          }
-          ptr += sizeof(struct inotify_event) + ev->len;
-        }
-      }
-    } else {
-      /* Fallback: poll-based outbox scan */
+    if (fw && fswatch_wait(fw, 0) > 0) {
+      usleep(50000);
+      tg_scan_outbox(ctx);
+    } else if (!fw) {
       tg_scan_outbox(ctx);
     }
 
@@ -1723,8 +1694,7 @@ void *telegram_run(void *arg) {
   }
 
   /* Cleanup */
-  if (iwd >= 0) inotify_rm_watch(ifd, iwd);
-  if (ifd >= 0) close(ifd);
+  fswatch_close(fw);
 
   fprintf(stderr, "[telegram] bridge thread stopped\n");
   return NULL;
