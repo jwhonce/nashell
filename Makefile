@@ -23,7 +23,7 @@ else ifeq ($(UNAME_S),Darwin)
   ifeq ($(BREW_GCC_PREFIX),)
     $(error Homebrew GCC not found — install with: brew install gcc)
   endif
-  CC := $(shell ls $(BREW_GCC_PREFIX)/bin/gcc-[0-9][0-9] 2>/dev/null | sort -V | tail -1)
+  CC := $(shell ls $(BREW_GCC_PREFIX)/bin/gcc-[0-9]* 2>/dev/null | sort -t- -k2 -n | tail -1)
   ifeq ($(CC),)
     $(error No gcc-NN binary found in $(BREW_GCC_PREFIX)/bin/)
   endif
