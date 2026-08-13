@@ -1223,9 +1223,8 @@ static void tg_process_outbox_file(telegram_ctx_t *ctx, const char *filename) {
   char path[512];
   snprintf(path, sizeof(path), "%s/outbox/%s", ctx->mailbox_dir, filename);
 
-  /* Skip .tmp files (in-progress writes) */
-  size_t flen = strlen(filename);
-  if (flen > 4 && strcmp(filename + flen - 4, ".tmp") == 0) return;
+  /* Skip temp files (in-progress atomic writes, e.g. result_id.tmp.XXXXXX) */
+  if (strstr(filename, ".tmp")) return;
 
   char *content = tg_read_outbox(path);
   if (!content) return;
