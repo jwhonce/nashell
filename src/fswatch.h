@@ -1,9 +1,9 @@
-/* fswatch.h — Platform-abstracted filesystem directory watcher.
+/* fswatch.h -- Platform-abstracted filesystem directory watcher.
  *
  * Uses inotify on Linux, kqueue on macOS.  Falls back to polling
  * if the platform-specific init fails at runtime.
  *
- * Callers receive "directory changed" notifications — not filenames.
+ * Callers receive "directory changed" notifications -- not filenames.
  * After fswatch_wait() returns 1, the caller scans the directory. */
 
 #ifndef FSWATCH_H
@@ -17,6 +17,8 @@ typedef struct fswatch fswatch_t;
 fswatch_t *fswatch_init(void);
 
 /* Watch a directory for file creation / move-in events.
+ * Only one directory may be watched per instance; calling again
+ * replaces the previous watch.
  * Returns 0 on success (including when the backend fails and the watcher
  * transparently degrades to polling mode), -1 on invalid arguments. */
 int fswatch_add(fswatch_t *w, const char *dir_path);
@@ -25,7 +27,9 @@ int fswatch_add(fswatch_t *w, const char *dir_path);
  * timeout_ms: >0 = milliseconds, 0 = non-blocking check, -1 = wait forever.
  * Returns: 1 = directory changed (caller should scan),
  *          0 = timeout with no change,
- *         -1 = error or interrupted by signal. */
+ *         -1 = error or interrupted by signal.
+ * Note: in polling fallback mode, always returns 1 (scan unconditionally)
+ * since actual change detection requires the platform backend. */
 int fswatch_wait(fswatch_t *w, int timeout_ms);
 
 /* Release all resources.  Safe to call with NULL. */

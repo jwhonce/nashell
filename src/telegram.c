@@ -10,8 +10,8 @@
  *
  * Threading model:
  *   The telegram_run() function runs in its own pthread, started by main.c.
- *   It alternates between short getUpdates polls and inotify-based outbox
- *   watching, using poll() to multiplex both file descriptors.
+ *   It alternates between short getUpdates polls and fswatch-based outbox
+ *   watching.
  */
 
 #include "telegram.h"
@@ -31,7 +31,6 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#include <poll.h>
 #include <curl/curl.h>
 #include <pthread.h>
 

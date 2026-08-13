@@ -36,7 +36,7 @@ static void close_extra_fds(int keep_fd) {
 #elif defined(__APPLE__)
   DIR *dp = opendir("/dev/fd");
 #else
-  #error "Unsupported platform"
+#error "Unsupported platform"
 #endif
   if (dp) {
     int dir_fd = dirfd(dp);
@@ -118,10 +118,14 @@ subprocess_result_t subprocess_run(char *const argv[],
   if (pipe2(pipefd, O_CLOEXEC) < 0) return r;
 #elif defined(__APPLE__)
   if (pipe(pipefd) < 0) return r;
-  fcntl(pipefd[0], F_SETFD, FD_CLOEXEC);
-  fcntl(pipefd[1], F_SETFD, FD_CLOEXEC);
+  if (fcntl(pipefd[0], F_SETFD, FD_CLOEXEC) < 0 ||
+      fcntl(pipefd[1], F_SETFD, FD_CLOEXEC) < 0) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    return r;
+  }
 #else
-  #error "Unsupported platform"
+#error "Unsupported platform"
 #endif
 
   pid_t pid = fork();

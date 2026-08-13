@@ -1,6 +1,6 @@
 VERSION ?= 0.1.2
 
-# ── Platform detection ────────────────────────────────────────
+# -- Platform detection ----------------------------------------
 UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),Linux)
@@ -10,18 +10,17 @@ ifeq ($(UNAME_S),Linux)
   DL_LIB           = -ldl
   SHARED_EXT       = so
   SHARED_FLAG      = -shared
-  SONAME_FLAG      = -Wl,-soname,$(LIB_SONAME)
   RPATH_ORIGIN     = $$ORIGIN
   EXPORT_DYNAMIC   = -rdynamic
   PLUGIN_EXT       = so
   BREW_CFLAGS      =
   BREW_LDFLAGS     =
 else ifeq ($(UNAME_S),Darwin)
-  # Homebrew GCC is required — Apple Clang is not supported.
+  # Homebrew GCC is required -- Apple Clang is not supported.
   # Auto-detect the highest-versioned gcc-NN in Homebrew's gcc prefix.
   BREW_GCC_PREFIX := $(shell brew --prefix gcc 2>/dev/null)
   ifeq ($(BREW_GCC_PREFIX),)
-    $(error Homebrew GCC not found — install with: brew install gcc)
+    $(error Homebrew GCC not found -- install with: brew install gcc)
   endif
   CC := $(shell ls $(BREW_GCC_PREFIX)/bin/gcc-[0-9]* 2>/dev/null | sort -t- -k2 -n | tail -1)
   ifeq ($(CC),)
@@ -59,7 +58,7 @@ else ifeq ($(UNAME_S),Darwin)
     BREW_LDFLAGS   =
   endif
 else
-  $(error Unsupported platform: $(UNAME_S) — requires Linux or Darwin)
+  $(error Unsupported platform: $(UNAME_S) -- requires Linux or Darwin)
 endif
 
 # Library names: Linux uses libnash.so.X.Y.Z, macOS uses libnash.X.Y.Z.dylib
@@ -77,7 +76,7 @@ endif
 
 RPATH_FLAG        = -Wl,-rpath,'$(RPATH_ORIGIN)'
 RPATH_PARENT_FLAG = -Wl,-rpath,'$(RPATH_ORIGIN)/..'
-# ── End platform detection ────────────────────────────────────
+# -- End platform detection ------------------------------------
 
 CFLAGS  ?= -Wall -g -Wextra -Wunused-function -O2 -std=c11 -fPIC -D_POSIX_C_SOURCE=200809L $(PLATFORM_DEFINES)
 CFLAGS  += $(BREW_CFLAGS)
@@ -284,6 +283,7 @@ test-container:
 	  podman exec nash bash -c "dnf install -y gcc make libcurl-devel openssl-devel readline-devel ncurses-devel utf8proc-devel onnxruntime-devel"; \
 	  podman exec nash bash -c "make clean && make && make test"; \
 	fi
+	# Clean host-side artifacts left by the bind-mounted container build
 	$(MAKE) clean
 
 .PHONY: all clean test test-container dist fmt

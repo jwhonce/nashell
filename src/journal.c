@@ -180,7 +180,7 @@ int journal_append(journal_t *j, int react_loop, int step, const char *tool,
 #elif defined(__APPLE__)
   fcntl(fileno(f), F_FULLFSYNC);
 #else
-  #error "Unsupported platform"
+#error "Unsupported platform"
 #endif
   fclose(f);
   pthread_mutex_unlock(&j->mtx); /* FIX CRIT2 */

@@ -9,7 +9,7 @@
  *
  * Threading model:
  *   The matrix_run() function runs in its own pthread, started by main.c.
- *   It alternates between /sync long-polls and inotify-based outbox
+ *   It alternates between /sync long-polls and fswatch-based outbox
  *   watching, using a short sync timeout to multiplex both.
  */
 
@@ -28,6 +28,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h> /* strcasecmp */
+#include <unistd.h>
+#include <errno.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <curl/curl.h>
+#include <pthread.h>
+
 #if defined(__APPLE__)
 static inline void explicit_bzero(void *buf, size_t len) {
 #if defined(__STDC_LIB_EXT1__)
@@ -38,14 +46,6 @@ static inline void explicit_bzero(void *buf, size_t len) {
 #endif
 }
 #endif
-#include <unistd.h>
-#include <errno.h>
-#include <time.h>
-#include <sys/stat.h>
-#include <dirent.h>
-#include <poll.h>
-#include <curl/curl.h>
-#include <pthread.h>
 
 /* Matrix API constants */
 #define MX_SYNC_TIMEOUT 5000 /* /sync timeout in ms (5 seconds) */
@@ -2727,6 +2727,7 @@ void *matrix_run(void *arg) {
           struct dirent *ode;
           while ((ode = readdir(odir)) != NULL) {
             if (strncmp(ode->d_name, "ask_", 4) != 0) continue;
+            if (strstr(ode->d_name, ".tmp")) continue;
             size_t nlen = strlen(ode->d_name);
             if (nlen < sizeof(pending_ask_id)) {
               snprintf(pending_ask_id, sizeof(pending_ask_id),

@@ -1,4 +1,4 @@
-/* fswatch.c — Platform-abstracted filesystem directory watcher.
+/* fswatch.c -- Platform-abstracted filesystem directory watcher.
  *
  * Backend selection:
  *   Linux:  inotify (IN_CREATE | IN_MOVED_TO)
@@ -24,21 +24,21 @@
 #include <sys/event.h>
 #include <sys/time.h>
 #else
-#error "Unsupported platform — requires Linux (inotify) or macOS (kqueue)"
+#error "Unsupported platform -- requires Linux (inotify) or macOS (kqueue)"
 #endif
 
 struct fswatch {
   int fallback; /* 1 = platform backend failed, use polling */
 #if defined(__linux__)
-  int ifd;      /* inotify fd */
-  int wd;       /* watch descriptor */
+  int ifd; /* inotify fd */
+  int wd;  /* watch descriptor */
 #elif defined(__APPLE__)
-  int kqfd;     /* kqueue fd */
-  int dirfd;    /* open directory fd for EVFILT_VNODE */
+  int kqfd;  /* kqueue fd */
+  int dirfd; /* open directory fd for EVFILT_VNODE */
 #endif
 };
 
-/* ── Init ──────────────────────────────────────────────── */
+/* -- Init --------------------------------------------- */
 
 fswatch_t *fswatch_init(void) {
   fswatch_t *w = calloc(1, sizeof(*w));
@@ -61,19 +61,23 @@ fswatch_t *fswatch_init(void) {
   return w;
 }
 
-/* ── Add watch ─────────────────────────────────────────── */
+/* -- Add watch ---------------------------------------- */
 
 int fswatch_add(fswatch_t *w, const char *dir_path) {
   if (!w || !dir_path) return -1;
-  if (w->fallback) return 0; /* polling mode — nothing to register */
+  if (w->fallback) return 0; /* polling mode -- nothing to register */
 
 #if defined(__linux__)
+  if (w->wd >= 0)
+    inotify_rm_watch(w->ifd, w->wd);
   w->wd = inotify_add_watch(w->ifd, dir_path, IN_CREATE | IN_MOVED_TO);
   if (w->wd < 0) {
     w->fallback = 1;
     return 0; /* degrade to polling */
   }
 #elif defined(__APPLE__)
+  if (w->dirfd >= 0)
+    close(w->dirfd);
   w->dirfd = open(dir_path, O_RDONLY | O_EVTONLY);
   if (w->dirfd < 0) {
     w->fallback = 1;
@@ -93,14 +97,19 @@ int fswatch_add(fswatch_t *w, const char *dir_path) {
   return 0;
 }
 
-/* ── Wait ──────────────────────────────────────────────── */
+/* -- Wait --------------------------------------------- */
 
 int fswatch_wait(fswatch_t *w, int timeout_ms) {
   if (!w) return -1;
 
-  /* Polling fallback: sleep in 1-second chunks then tell caller to scan.
-   * Caps each usleep to avoid useconds_t overflow on large timeouts. */
+  /* Polling fallback: can't detect actual changes, so sleep then tell
+   * the caller to scan unconditionally.  Sleeps in 1-second chunks to
+   * avoid useconds_t overflow.  timeout_ms < 0 means wait forever. */
   if (w->fallback) {
+    if (timeout_ms < 0) {
+      for (;;)
+        usleep(1000000);
+    }
     int remaining = timeout_ms;
     while (remaining > 0) {
       int chunk = remaining > 1000 ? 1000 : remaining;
@@ -115,7 +124,7 @@ int fswatch_wait(fswatch_t *w, int timeout_ms) {
     struct pollfd pfd = {.fd = w->ifd, .events = POLLIN};
     int ret = poll(&pfd, 1, timeout_ms);
     if (ret < 0)
-      return (errno == EINTR) ? -1 : -1;
+      return -1;
     if (ret == 0)
       return 0; /* timeout */
 
@@ -123,7 +132,7 @@ int fswatch_wait(fswatch_t *w, int timeout_ms) {
     char buf[4096]
       __attribute__((aligned(__alignof__(struct inotify_event))));
     while (read(w->ifd, buf, sizeof(buf)) > 0)
-      ; /* discard — callers scan the directory themselves */
+      ; /* discard -- callers scan the directory themselves */
     return 1;
   }
 #elif defined(__APPLE__)
@@ -146,7 +155,7 @@ int fswatch_wait(fswatch_t *w, int timeout_ms) {
 #endif
 }
 
-/* ── Close ─────────────────────────────────────────────── */
+/* -- Close -------------------------------------------- */
 
 void fswatch_close(fswatch_t *w) {
   if (!w) return;

@@ -50,6 +50,9 @@ prime_numbers.c
 fixed_point_sin
 fixed_point_sin.c
 
+# Local-only project files
+CLAUDE.md
+
 # Editor/IDE
 .clangd
 *.swp

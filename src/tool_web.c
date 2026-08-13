@@ -185,8 +185,8 @@ static size_t web_write_cb(void *ptr, size_t size, size_t nmemb, void *userdata)
  * redirects to new hosts).  Rejects connections to internal/private IPs
  * that would bypass the initial url_check_ssrf() validation. */
 static int ssrf_prereq_cb(void *clientp, char *conn_primary_ip,
-                           char *conn_local_ip, int conn_primary_port,
-                           int conn_local_port) {
+                          char *conn_local_ip, int conn_primary_port,
+                          int conn_local_port) {
   (void)clientp;
   (void)conn_local_ip;
   (void)conn_primary_port;

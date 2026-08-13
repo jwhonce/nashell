@@ -116,7 +116,7 @@ static int download_to_file(const char *url, const char *dest) {
   curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
   curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L); /* show progress meter */
   curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);  /* 10 min for large files */
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L); /* 10 min for large files */
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "nash/1.0");
   curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
 
@@ -459,7 +459,7 @@ typedef struct {
 /* HuggingFace URLs for all-MiniLM-L6-v2 ONNX model */
 #define HF_MINILM_BASE \
   "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main"
-#define HF_MINILM_ONNX  HF_MINILM_BASE "/onnx/model.onnx"
+#define HF_MINILM_ONNX HF_MINILM_BASE "/onnx/model.onnx"
 #define HF_MINILM_VOCAB HF_MINILM_BASE "/vocab.txt"
 
 /* Download the all-MiniLM-L6-v2 ONNX model into model_dir.

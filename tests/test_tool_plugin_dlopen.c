@@ -28,11 +28,11 @@
 int g_path_given = 0;
 
 #if defined(__linux__)
-  #define PLUGIN_EXT ".so"
+#define PLUGIN_EXT ".so"
 #elif defined(__APPLE__)
-  #define PLUGIN_EXT ".dylib"
+#define PLUGIN_EXT ".dylib"
 #else
-  #error "Unsupported platform"
+#error "Unsupported platform"
 #endif
 
 /* Helper: get path relative to test binary location.
