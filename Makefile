@@ -271,4 +271,19 @@ dist:
 fmt:
 	git ls-files -z '*.c' '*.h' | xargs -0 clang-format -i
 
-.PHONY: all clean test dist fmt
+test-container:
+	@if podman container exists nash 2>/dev/null; then \
+	  podman start nash 2>/dev/null || true; \
+	  podman exec nash bash -c "make clean && make && make test"; \
+	else \
+	  podman run --name nash -d \
+	    -v $(CURDIR):/workspace:Z \
+	    -w /workspace \
+	    registry.fedoraproject.org/fedora:latest \
+	    sleep infinity; \
+	  podman exec nash bash -c "dnf install -y gcc make libcurl-devel openssl-devel readline-devel ncurses-devel utf8proc-devel onnxruntime-devel"; \
+	  podman exec nash bash -c "make clean && make && make test"; \
+	fi
+	$(MAKE) clean
+
+.PHONY: all clean test test-container dist fmt
