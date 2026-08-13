@@ -28,7 +28,7 @@ static int cmd_agents_list(command_ctx_t *ctx) {
     ui_locked_set_status(ui, STATUS_ERROR, "/agent: scan failed");
     return CMD_CONTINUE;
   }
-  agent_queue_load(q, ctx->dirs->state_dir);
+  agent_queue_load(q, ctx->dirs->data_dir);
   agent_queue_schedule(q, time(NULL));
 
   str_t display = str_new(2048);
@@ -115,7 +115,7 @@ static int cmd_agents_show(command_ctx_t *ctx, const char *id) {
     ui_locked_set_status(ui, STATUS_ERROR, "/agent show: scan failed");
     return CMD_CONTINUE;
   }
-  agent_queue_load(q, ctx->dirs->state_dir);
+  agent_queue_load(q, ctx->dirs->data_dir);
   agent_queue_schedule(q, time(NULL));
 
   const agent_entry_t *found = agent_find(q, id);
@@ -222,7 +222,7 @@ static int cmd_agents_run(command_ctx_t *ctx, const char *id) {
     free(id_buf);
     return CMD_CONTINUE;
   }
-  agent_queue_load(q, ctx->dirs->state_dir);
+  agent_queue_load(q, ctx->dirs->data_dir);
   agent_queue_schedule(q, time(NULL));
 
   const agent_entry_t *found = agent_find(q, id_buf);
@@ -332,7 +332,7 @@ static int cmd_agents_history(command_ctx_t *ctx, const char *filter_id) {
       filter_id++;
 
   char path[NASH_PATH_MAX];
-  snprintf(path, sizeof(path), "%s/agent/history.jsonl", ctx->dirs->state_dir);
+  snprintf(path, sizeof(path), "%s/agent/history.jsonl", ctx->dirs->data_dir);
 
   FILE *f = fopen(path, "r");
   if (!f) {
@@ -436,7 +436,7 @@ static int cmd_agents_due(command_ctx_t *ctx) {
     ui_locked_set_status(ui, STATUS_ERROR, "/agent due: scan failed");
     return CMD_CONTINUE;
   }
-  agent_queue_load(q, ctx->dirs->state_dir);
+  agent_queue_load(q, ctx->dirs->data_dir);
   agent_queue_schedule(q, time(NULL));
 
   str_t display = str_new(1024);
@@ -490,7 +490,7 @@ static int cmd_agents_result(command_ctx_t *ctx, const char *id) {
   /* Try exact ID first, then resolve via scan */
   char path[NASH_PATH_MAX];
   snprintf(path, sizeof(path),
-           "%s/agent/results/%s/latest.md", ctx->dirs->state_dir, id);
+           "%s/agent/results/%s/latest.md", ctx->dirs->data_dir, id);
 
   size_t clen = 0;
   char *content = slurp_file(path, &clen);
@@ -498,12 +498,12 @@ static int cmd_agents_result(command_ctx_t *ctx, const char *id) {
     /* Suffix resolve: scan to find full agent ID */
     agent_queue_t *q = agent_scan(ctx->dirs->data_dir);
     if (q) {
-      agent_queue_load(q, ctx->dirs->state_dir);
+      agent_queue_load(q, ctx->dirs->data_dir);
       agent_queue_schedule(q, time(NULL));
       const agent_entry_t *found = agent_find(q, id);
       if (found && is_safe_path_component(found->id)) {
         snprintf(path, sizeof(path),
-                 "%s/agent/results/%s/latest.md", ctx->dirs->state_dir, found->id);
+                 "%s/agent/results/%s/latest.md", ctx->dirs->data_dir, found->id);
         content = slurp_file(path, &clen);
       }
       agent_queue_free(q);

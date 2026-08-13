@@ -38,7 +38,7 @@ static int cmd_name(command_ctx_t *ctx, const char *name) {
                          "/name: invalid name (no slashes, max 255 chars)");
     return CMD_CONTINUE;
   }
-  char *sb = sessions_base_dir(ctx->dirs->state_dir, ctx->cfg->workspace);
+  char *sb = sessions_base_dir(ctx->dirs->data_dir, ctx->cfg->workspace);
   char link_path[1088];
   path_join(link_path, sizeof(link_path), sb, name);
   free(sb);
@@ -265,7 +265,7 @@ static int cmd_runs(command_ctx_t *ctx, const char *sub) {
   }
 
   char rdir[NASH_PATH_MAX];
-  snprintf(rdir, sizeof(rdir), "%s/runs", ctx->dirs->state_dir);
+  snprintf(rdir, sizeof(rdir), "%s/runs", ctx->dirs->data_dir);
 
   if (show_detail && show_id && *show_id) {
     /* Validate run ID to prevent path traversal */
@@ -305,7 +305,7 @@ static int cmd_runs(command_ctx_t *ctx, const char *sub) {
     str_appendf(&display, "# Playbook Runs\n\n");
 
     if (!d) {
-      str_appendf(&display, "No runs yet (%s/runs/ not found)\n", ctx->dirs->state_dir);
+      str_appendf(&display, "No runs yet (%s/runs/ not found)\n", ctx->dirs->data_dir);
     } else {
       struct dirent *ent;
       int count = 0;

@@ -14,8 +14,6 @@
 typedef struct {
   char *config_dir; /* XDG_CONFIG_HOME/nash or ~/.nash */
   char *data_dir;   /* XDG_DATA_HOME/nash   or ~/.nash */
-  char *state_dir;  /* XDG_STATE_HOME/nash   or ~/.nash */
-  char *cache_dir;  /* XDG_CACHE_HOME/nash   or ~/.nash */
   int xdg_mode;     /* 1 = split XDG layout, 0 = legacy single-dir */
 } nash_dirs_t;
 
@@ -31,7 +29,7 @@ int nash_dirs_find_config(char *config_path_out, size_t out_sz);
 
 /* Resolve all directories.
  *
- * If data_dir_override is non-NULL, all four fields are set to that path
+ * If data_dir_override is non-NULL, both fields are set to that path
  * and xdg_mode is 0 (--data-dir is the rule).
  *
  * Otherwise, detects mode from where config.toml was found:

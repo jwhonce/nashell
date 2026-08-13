@@ -439,7 +439,7 @@ static void cleanup_globals(store_t *shared_store, workspace_t *ws,
  * access between this thread and the react loop's memory_query. */
 
 typedef struct {
-  char *state_dir;              /* strdup'd — sessions live under state_dir */
+  char *data_dir;               /* strdup'd — sessions live under data_dir */
   char *workspace;              /* strdup'd, may be NULL */
   embed_config_t embed_cfg;     /* copied config (strings strdup'd) */
   session_index_t *session_idx; /* shared, protected by its own mtx */
@@ -458,12 +458,12 @@ static void *backfill_thread_fn(void *arg) {
 
   /* Backfill global sessions */
   char sessions_dir[NASH_PATH_MAX];
-  snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", a->state_dir);
+  snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", a->data_dir);
   session_index_chunk_backfill(sessions_dir, embed, a->session_idx);
 
   /* Backfill workspace sessions */
   if (a->workspace && a->workspace[0]) {
-    char *ws_sessions = sessions_base_dir(a->state_dir, a->workspace);
+    char *ws_sessions = sessions_base_dir(a->data_dir, a->workspace);
     session_index_chunk_backfill(ws_sessions, embed, a->session_idx);
     free(ws_sessions);
   }
@@ -471,7 +471,7 @@ static void *backfill_thread_fn(void *arg) {
   embed_free(embed);
 
 done:
-  free(a->state_dir);
+  free(a->data_dir);
   free(a->workspace);
   free(a->embed_cfg.model);
   free(a->embed_cfg.api_base);
@@ -812,12 +812,12 @@ int main(int argc, char **argv) {
 
   /* ── Postmortem mode: no LLM needed ── */
   if (postmortem_mode) {
-    postmortem_report_t *pm = postmortem_analyze(dirs->state_dir, postmortem_sessions);
+    postmortem_report_t *pm = postmortem_analyze(dirs->data_dir, postmortem_sessions);
     postmortem_print(pm);
 
     /* Save evidence bundle */
     char bundle_path[NASH_PATH_MAX];
-    snprintf(bundle_path, sizeof(bundle_path), "%s/postmortem.md", dirs->state_dir);
+    snprintf(bundle_path, sizeof(bundle_path), "%s/postmortem.md", dirs->data_dir);
     if (pm->total_failures > 0) {
       postmortem_save(pm, bundle_path);
       fprintf(stderr, "  Evidence bundle saved: %s\n\n", bundle_path);
@@ -1118,12 +1118,12 @@ int main(int argc, char **argv) {
   session_index_t *session_idx = NULL;
   {
     char sessions_dir[NASH_PATH_MAX];
-    snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", dirs->state_dir);
+    snprintf(sessions_dir, sizeof(sessions_dir), "%s/sessions", dirs->data_dir);
     session_idx = session_index_load(sessions_dir);
 
     /* Also load workspace sessions into the same index */
     if (cfg->workspace && cfg->workspace[0] && session_idx) {
-      char *ws_sessions = sessions_base_dir(dirs->state_dir, cfg->workspace);
+      char *ws_sessions = sessions_base_dir(dirs->data_dir, cfg->workspace);
       session_index_load_dir(session_idx, ws_sessions);
       free(ws_sessions);
     }
@@ -1137,7 +1137,7 @@ int main(int argc, char **argv) {
       if (src_embed) {
         backfill_args_t *bfa = xcalloc(1, sizeof(*bfa));
         if (bfa) {
-          bfa->state_dir = xstrdup(dirs->state_dir);
+          bfa->data_dir = xstrdup(dirs->data_dir);
           bfa->workspace = (cfg->workspace && cfg->workspace[0])
                              ? xstrdup(cfg->workspace)
                              : NULL;
@@ -1451,7 +1451,7 @@ int main(int argc, char **argv) {
             pb->name, ok ? "completed successfully" : "FAILED");
 
     /* Route result to outbox if a daemon (--matrix/--telegram) is running */
-    route_to_outbox(dirs->state_dir, pargs.result_text,
+    route_to_outbox(dirs->data_dir, pargs.result_text,
                     ws && ws->name ? ws->name : NULL, pb->name);
 
     free(pargs.result_text);
@@ -1489,7 +1489,7 @@ int main(int argc, char **argv) {
       cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
-    agent_queue_load(q, dirs->state_dir);
+    agent_queue_load(q, dirs->data_dir);
     agent_queue_schedule(q, time(NULL));
 
     if (agents_list) {
@@ -1530,7 +1530,7 @@ int main(int argc, char **argv) {
          * through its mailbox outbox so the bridge can deliver them. */
     char mbox_dir[NASH_PATH_MAX];
     const char *mbox = NULL;
-    if (mailbox_init(dirs->state_dir, mbox_dir, sizeof(mbox_dir)) == 0)
+    if (mailbox_init(dirs->data_dir, mbox_dir, sizeof(mbox_dir)) == 0)
       mbox = mbox_dir;
     int n_fail = agent_run_due(dirs, shared_store, cfg, provider,
                                server_model, agent_target_id,
@@ -1544,12 +1544,12 @@ int main(int argc, char **argv) {
   /* Daemon mode: watch mailbox inbox for tasks, process them sequentially */
   if (daemon_mode) {
     /* Prevent multiple daemons sharing the same mailbox/room */
-    if (daemon_lock_acquire(dirs->state_dir) != 0) {
+    if (daemon_lock_acquire(dirs->data_dir) != 0) {
       cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
     }
     char mbox_dir[NASH_PATH_MAX];
-    if (mailbox_init(dirs->state_dir, mbox_dir, sizeof(mbox_dir)) != 0) {
+    if (mailbox_init(dirs->data_dir, mbox_dir, sizeof(mbox_dir)) != 0) {
       fprintf(stderr, "[error] failed to initialize mailbox\n");
       cleanup_globals(shared_store, ws, provider, dirs, props_json, server_model, cfg);
       return 1;
@@ -1576,7 +1576,7 @@ int main(int argc, char **argv) {
     int tg_started = 0;
     telegram_ctx_t tg_ctx;
     if (telegram_mode) {
-      telegram_init(&tg_ctx, config_path, dirs->state_dir, mbox_dir, &shutdown_requested);
+      telegram_init(&tg_ctx, config_path, dirs->data_dir, mbox_dir, &shutdown_requested);
       if (!tg_ctx.bot_token || !tg_ctx.chat_id) {
         /* No config — run interactive setup */
         if (telegram_setup(&tg_ctx) != 0) {
@@ -1600,7 +1600,7 @@ int main(int argc, char **argv) {
     int mx_started = 0;
     matrix_ctx_t mx_ctx;
     if (matrix_mode) {
-      matrix_init(&mx_ctx, config_path, dirs->state_dir, mbox_dir, &shutdown_requested);
+      matrix_init(&mx_ctx, config_path, dirs->data_dir, mbox_dir, &shutdown_requested);
       if (!mx_ctx.access_token || !mx_ctx.room_id) {
         /* No config — run interactive setup */
         if (matrix_setup(&mx_ctx) != 0) {
@@ -1652,7 +1652,7 @@ int main(int argc, char **argv) {
       s->name = cfg->workspace ? xstrdup(cfg->workspace) : NULL;
       s->ws = ws; /* reuse the ws already created at L655 */
       s->mem = ws ? ws->global : NULL;
-      s->session_dir = create_session_dir(dirs->state_dir, cfg->workspace);
+      s->session_dir = create_session_dir(dirs->data_dir, cfg->workspace);
       s->journal = journal_new(s->session_dir);
       session_init_tools(&s->tools, shared_store, s->journal, s->mem,
                          s->ws, s->session_dir, cfg, provider);
@@ -1687,7 +1687,7 @@ int main(int argc, char **argv) {
             if (is_dir_empty(s->session_dir))
               rmdir(s->session_dir);
             free(s->session_dir);
-            s->session_dir = create_session_dir(dirs->state_dir, s->name);
+            s->session_dir = create_session_dir(dirs->data_dir, s->name);
             s->journal = journal_new(s->session_dir);
             session_init_tools(&s->tools, shared_store, s->journal,
                                s->mem, s->ws, s->session_dir,
@@ -1737,7 +1737,7 @@ int main(int argc, char **argv) {
             if (is_dir_empty(s->session_dir))
               rmdir(s->session_dir);
             free(s->session_dir);
-            s->session_dir = create_session_dir(dirs->state_dir, s->name);
+            s->session_dir = create_session_dir(dirs->data_dir, s->name);
             s->journal = journal_new(s->session_dir);
             session_init_tools(&s->tools, shared_store, s->journal,
                                s->mem, s->ws, s->session_dir,
@@ -1811,7 +1811,7 @@ int main(int argc, char **argv) {
                                     cfg->recall_blend_semantic,
                                     cfg->recall_blend_substring,
                                     cfg->vscore_exponent);
-        s->session_dir = create_session_dir(dirs->state_dir, s->name);
+        s->session_dir = create_session_dir(dirs->data_dir, s->name);
         s->journal = journal_new(s->session_dir);
         session_init_tools(&s->tools, shared_store, s->journal,
                            s->mem, s->ws, s->session_dir,
@@ -1935,7 +1935,7 @@ int main(int argc, char **argv) {
     journal_t *journal;
     if (!session_dir) {
       /* Lazy session: directory created on first journal_append */
-      journal = journal_new_lazy(dirs->state_dir, cfg->workspace);
+      journal = journal_new_lazy(dirs->data_dir, cfg->workspace);
       lazy_session = 1;
     } else {
       journal = journal_new(session_dir);
@@ -1950,7 +1950,7 @@ int main(int argc, char **argv) {
     char *result;
     if (mailbox_mode) {
       char mbox_dir[NASH_PATH_MAX];
-      if (mailbox_init(dirs->state_dir, mbox_dir, sizeof(mbox_dir)) != 0) {
+      if (mailbox_init(dirs->data_dir, mbox_dir, sizeof(mbox_dir)) != 0) {
         fprintf(stderr, "[error] failed to initialize mailbox\n");
         session_cleanup(&tools, &react, journal);
         if (session_dir) free(session_dir);
@@ -1966,12 +1966,12 @@ int main(int argc, char **argv) {
       fprintf(stderr, "[mailbox] enabled — questions in %s/outbox/, answers in %s/inbox/\n",
               mbox_dir, mbox_dir);
       /* Forward query to bridge before processing */
-      route_query_to_outbox(dirs->state_dir, query,
+      route_query_to_outbox(dirs->data_dir, query,
                             ws && ws->name ? ws->name : NULL, NULL, 1);
       result = react_run(&react, query, mailbox_on_event, &mbox);
     } else {
       /* Forward query to bridge before processing */
-      route_query_to_outbox(dirs->state_dir, query,
+      route_query_to_outbox(dirs->data_dir, query,
                             ws && ws->name ? ws->name : NULL, NULL, 1);
       result = react_run(&react, query, tui_on_event, NULL);
     }
@@ -1986,7 +1986,7 @@ int main(int argc, char **argv) {
     memory_prune(memory, cfg->prune_min_score, cfg->prune_min_evidence);
     int have_result = (result != NULL);
     /* Route result to outbox if a daemon (--matrix/--telegram) is running */
-    route_to_outbox(dirs->state_dir, result,
+    route_to_outbox(dirs->data_dir, result,
                     ws && ws->name ? ws->name : NULL, NULL);
     if (result) {
       printf("%s\n", result);
@@ -2034,7 +2034,7 @@ int main(int argc, char **argv) {
     /* Interactive TUI needs session_dir immediately for journal display,
          * so always create it eagerly (lazy sessions break TUI rendering). */
     if (!session_dir) {
-      session_dir = create_session_dir(dirs->state_dir, cfg->workspace);
+      session_dir = create_session_dir(dirs->data_dir, cfg->workspace);
     }
     journal_t *journal = journal_new(session_dir);
     tool_ctx_t tools;
@@ -2149,14 +2149,14 @@ int main(int argc, char **argv) {
           int dur = (int)(time(NULL) - pargs_tui.agent_start_time);
           const char *status = pargs_tui.playbook_ok ? "ok" : "fail";
           agent_entry_t tmp_agent = {.id = pargs_tui.agent_id};
-          agent_history_append(pargs_tui.dirs->state_dir, &tmp_agent,
+          agent_history_append(pargs_tui.dirs->data_dir, &tmp_agent,
                                dur, status, NULL);
-          agent_queue_update_run(pargs_tui.dirs->state_dir,
+          agent_queue_update_run(pargs_tui.dirs->data_dir,
                                  pargs_tui.agent_id,
                                  pargs_tui.agent_start_time,
                                  dur, status);
           if (pargs_tui.last_session_dir)
-            agent_save_result(pargs_tui.dirs->state_dir,
+            agent_save_result(pargs_tui.dirs->data_dir,
                               pargs_tui.agent_id,
                               pargs_tui.last_session_dir);
           free(pargs_tui.agent_id);
@@ -2168,7 +2168,7 @@ int main(int argc, char **argv) {
         }
 
         /* Route result to outbox if a daemon (--matrix/--telegram) is running */
-        route_to_outbox(dirs->state_dir, pargs_tui.result_text,
+        route_to_outbox(dirs->data_dir, pargs_tui.result_text,
                         ws && ws->name ? ws->name : NULL,
                         pargs_tui.playbook ? pargs_tui.playbook->name : NULL);
 
@@ -2224,7 +2224,7 @@ int main(int argc, char **argv) {
         memory_prune(memory, cfg->prune_min_score, cfg->prune_min_evidence);
         char *result = iargs.result;
         /* Route result to outbox if a daemon (--matrix/--telegram) is running */
-        route_to_outbox(dirs->state_dir, result,
+        route_to_outbox(dirs->data_dir, result,
                         ws && ws->name ? ws->name : NULL, NULL);
         pthread_mutex_lock(&ui->mtx);
         if (result) {
@@ -2496,7 +2496,7 @@ int main(int argc, char **argv) {
                                    : NULL;
         free(submitted_query); /* strdup'd into final_query; ui_state_add_query also strdup'd */
         /* Forward query to bridge for session threading */
-        route_query_to_outbox(dirs->state_dir, final_query,
+        route_query_to_outbox(dirs->data_dir, final_query,
                               ws && ws->name ? ws->name : NULL, NULL,
                               tools.react_loop == 0 ? 1 : 0);
         if (pthread_create(&infer_tid, NULL, infer_worker, &iargs) == 0) {

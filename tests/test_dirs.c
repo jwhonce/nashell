@@ -11,8 +11,6 @@
 static void unset_xdg_vars(void) {
   unsetenv("XDG_CONFIG_HOME");
   unsetenv("XDG_DATA_HOME");
-  unsetenv("XDG_STATE_HOME");
-  unsetenv("XDG_CACHE_HOME");
 }
 
 /* ── Tests ─────────────────────────────────────────────── */
@@ -25,8 +23,6 @@ static void test_override_sets_all_dirs(void) {
   ASSERT_EQ(d->xdg_mode, 0);
   ASSERT_STR_EQ(d->config_dir, tmp);
   ASSERT_STR_EQ(d->data_dir, tmp);
-  ASSERT_STR_EQ(d->state_dir, tmp);
-  ASSERT_STR_EQ(d->cache_dir, tmp);
 
   nash_dirs_free(d);
   rm_rf(tmp);
@@ -76,8 +72,6 @@ static void test_legacy_mode_when_dot_nash_exists(void) {
   ASSERT_EQ(d->xdg_mode, 0);
   ASSERT_STR_EQ(d->config_dir, dot_nash);
   ASSERT_STR_EQ(d->data_dir, dot_nash);
-  ASSERT_STR_EQ(d->state_dir, dot_nash);
-  ASSERT_STR_EQ(d->cache_dir, dot_nash);
 
   nash_dirs_free(d);
   setenv("HOME", old_home, 1);
@@ -107,17 +101,9 @@ static void test_xdg_mode_fresh_install(void) {
   snprintf(expected, sizeof(expected), "%s/.local/share/nash", tmp);
   ASSERT_STR_EQ(d->data_dir, expected);
 
-  snprintf(expected, sizeof(expected), "%s/.local/state/nash", tmp);
-  ASSERT_STR_EQ(d->state_dir, expected);
-
-  snprintf(expected, sizeof(expected), "%s/.cache/nash", tmp);
-  ASSERT_STR_EQ(d->cache_dir, expected);
-
   /* Verify directories were created */
   ASSERT(dir_exists(d->config_dir));
   ASSERT(dir_exists(d->data_dir));
-  ASSERT(dir_exists(d->state_dir));
-  ASSERT(dir_exists(d->cache_dir));
 
   nash_dirs_free(d);
   setenv("HOME", old_home, 1);
@@ -134,16 +120,12 @@ static void test_xdg_env_vars_override_defaults(void) {
   setenv("HOME", tmp, 1);
 
   /* Set custom XDG dirs */
-  char custom_config[512], custom_data[512], custom_state[512], custom_cache[512];
+  char custom_config[512], custom_data[512];
   snprintf(custom_config, sizeof(custom_config), "%s/myconfig", tmp);
   snprintf(custom_data, sizeof(custom_data), "%s/mydata", tmp);
-  snprintf(custom_state, sizeof(custom_state), "%s/mystate", tmp);
-  snprintf(custom_cache, sizeof(custom_cache), "%s/mycache", tmp);
 
   setenv("XDG_CONFIG_HOME", custom_config, 1);
   setenv("XDG_DATA_HOME", custom_data, 1);
-  setenv("XDG_STATE_HOME", custom_state, 1);
-  setenv("XDG_CACHE_HOME", custom_cache, 1);
 
   nash_dirs_t *d = nash_dirs_resolve(NULL);
   ASSERT_NOT_NULL(d);
@@ -155,12 +137,6 @@ static void test_xdg_env_vars_override_defaults(void) {
 
   snprintf(expected, sizeof(expected), "%s/nash", custom_data);
   ASSERT_STR_EQ(d->data_dir, expected);
-
-  snprintf(expected, sizeof(expected), "%s/nash", custom_state);
-  ASSERT_STR_EQ(d->state_dir, expected);
-
-  snprintf(expected, sizeof(expected), "%s/nash", custom_cache);
-  ASSERT_STR_EQ(d->cache_dir, expected);
 
   nash_dirs_free(d);
   unset_xdg_vars();
@@ -350,8 +326,6 @@ static void test_resolve_creates_deep_xdg_dirs(void) {
 
   ASSERT(dir_exists(d->config_dir));
   ASSERT(dir_exists(d->data_dir));
-  ASSERT(dir_exists(d->state_dir));
-  ASSERT(dir_exists(d->cache_dir));
 
   nash_dirs_free(d);
   setenv("HOME", old_home, 1);
@@ -377,8 +351,8 @@ static void test_override_creates_deep_dir(void) {
 static void test_sessions_base_dir_creates_deep_path(void) {
   char *tmp = make_test_dir();
 
-  /* state_dir/workspaces/myws/sessions should be created even if
-     state_dir/workspaces doesn't exist yet */
+  /* data_dir/workspaces/myws/sessions should be created even if
+     data_dir/workspaces doesn't exist yet */
   char *sb = sessions_base_dir(tmp, "myws");
   ASSERT_NOT_NULL(sb);
   ASSERT(dir_exists(sb));
@@ -492,6 +466,103 @@ static void test_agent_history_creates_dir(void) {
   free(tmp);
 }
 
+/* ── Migration warning (XDG mode + legacy ~/.nash coexist) ── */
+
+static void test_xdg_with_legacy_dir_present(void) {
+  unset_xdg_vars();
+  char *tmp = make_test_dir();
+
+  char old_home[NASH_PATH_MAX];
+  snprintf(old_home, sizeof(old_home), "%s", getenv("HOME") ? getenv("HOME") : "/tmp");
+  setenv("HOME", tmp, 1);
+
+  /* Create XDG config so we enter XDG mode */
+  char xdg_config[512];
+  snprintf(xdg_config, sizeof(xdg_config), "%s/.config/nash", tmp);
+  mkdir_p(xdg_config, 0755);
+
+  char config[512];
+  snprintf(config, sizeof(config), "%s/.config/nash/config.toml", tmp);
+  write_file(config, "", 0);
+
+  /* Also create legacy ~/.nash dir — triggers migration warning */
+  char dot_nash[512];
+  snprintf(dot_nash, sizeof(dot_nash), "%s/.nash", tmp);
+  mkdir(dot_nash, 0755);
+
+  nash_dirs_t *d = nash_dirs_resolve(NULL);
+  ASSERT_NOT_NULL(d);
+  ASSERT_EQ(d->xdg_mode, 1);
+
+  /* Should use XDG paths, not legacy */
+  ASSERT_STR_EQ(d->config_dir, xdg_config);
+  char expected_data[512];
+  snprintf(expected_data, sizeof(expected_data), "%s/.local/share/nash", tmp);
+  ASSERT_STR_EQ(d->data_dir, expected_data);
+
+  nash_dirs_free(d);
+  setenv("HOME", old_home, 1);
+  rm_rf(tmp);
+  free(tmp);
+}
+
+/* ── config_dir != data_dir in XDG mode ─────────────────── */
+
+static void test_xdg_config_and_data_are_distinct(void) {
+  unset_xdg_vars();
+  char *tmp = make_test_dir();
+
+  char old_home[NASH_PATH_MAX];
+  snprintf(old_home, sizeof(old_home), "%s", getenv("HOME") ? getenv("HOME") : "/tmp");
+  setenv("HOME", tmp, 1);
+
+  nash_dirs_t *d = nash_dirs_resolve(NULL);
+  ASSERT_NOT_NULL(d);
+  ASSERT_EQ(d->xdg_mode, 1);
+
+  /* In XDG mode, config_dir and data_dir must be different pointers
+   * and different paths */
+  ASSERT(d->config_dir != d->data_dir);
+  ASSERT(strcmp(d->config_dir, d->data_dir) != 0);
+
+  nash_dirs_free(d);
+  setenv("HOME", old_home, 1);
+  rm_rf(tmp);
+  free(tmp);
+}
+
+/* ── Legacy mode aliases config_dir == data_dir ──────────── */
+
+static void test_legacy_config_and_data_are_same(void) {
+  unset_xdg_vars();
+  char *tmp = make_test_dir();
+
+  char old_home[NASH_PATH_MAX];
+  snprintf(old_home, sizeof(old_home), "%s", getenv("HOME") ? getenv("HOME") : "/tmp");
+  setenv("HOME", tmp, 1);
+
+  /* Create legacy layout */
+  char dot_nash[512];
+  snprintf(dot_nash, sizeof(dot_nash), "%s/.nash", tmp);
+  mkdir(dot_nash, 0755);
+
+  char config[512];
+  snprintf(config, sizeof(config), "%s/.nash/config.toml", tmp);
+  write_file(config, "", 0);
+
+  nash_dirs_t *d = nash_dirs_resolve(NULL);
+  ASSERT_NOT_NULL(d);
+  ASSERT_EQ(d->xdg_mode, 0);
+
+  /* In legacy mode, both point to the same allocation */
+  ASSERT(d->config_dir == d->data_dir);
+
+  nash_dirs_free(d);
+  setenv("HOME", old_home, 1);
+  rm_rf(tmp);
+  free(tmp);
+}
+
 /* ── Main ──────────────────────────────────────────────── */
 
 int main(void) {
@@ -516,6 +587,9 @@ int main(void) {
   RUN_TEST(test_create_session_dir_workspace_deep);
   RUN_TEST(test_agent_queue_load_save_creates_dir);
   RUN_TEST(test_agent_history_creates_dir);
+  RUN_TEST(test_xdg_with_legacy_dir_present);
+  RUN_TEST(test_xdg_config_and_data_are_distinct);
+  RUN_TEST(test_legacy_config_and_data_are_same);
 
   TEST_SUMMARY();
 }

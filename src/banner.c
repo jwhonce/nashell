@@ -114,8 +114,6 @@ char *build_banner_impl(const config_t *cfg, const char *props_json,
   if (dirs->xdg_mode) {
     str_appendf(&s, "config: %s\n", dirs->config_dir);
     str_appendf(&s, "data:   %s\n", dirs->data_dir);
-    str_appendf(&s, "state:  %s\n", dirs->state_dir);
-    str_appendf(&s, "cache:  %s\n", dirs->cache_dir);
   } else {
     str_appendf(&s, "data:   %s\n", dirs->data_dir);
   }

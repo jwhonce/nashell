@@ -303,24 +303,24 @@ int mkdir_p(const char *path, mode_t mode) {
 }
 
 /* Return sessions base directory, workspace-aware.
- * state_dir: base directory for session state (XDG state_dir or legacy ~/.nash). */
-char *sessions_base_dir(const char *state_dir, const char *workspace) {
+ * data_dir: base directory (XDG data_dir or legacy ~/.nash). */
+char *sessions_base_dir(const char *data_dir, const char *workspace) {
   char buf[1024];
   if (workspace && workspace[0])
-    snprintf(buf, sizeof(buf), "%s/workspaces/%s/sessions", state_dir, workspace);
+    snprintf(buf, sizeof(buf), "%s/workspaces/%s/sessions", data_dir, workspace);
   else
-    snprintf(buf, sizeof(buf), "%s/sessions", state_dir);
+    snprintf(buf, sizeof(buf), "%s/sessions", data_dir);
   mkdir_p(buf, 0755);
   return xstrdup(buf);
 }
 
 /* Create a new session directory with epoch-based name.
- * state_dir: base directory for session state. */
-char *create_session_dir(const char *state_dir, const char *workspace) {
+ * data_dir: base directory (XDG data_dir or legacy ~/.nash). */
+char *create_session_dir(const char *data_dir, const char *workspace) {
   struct timespec tp;
   clock_gettime(CLOCK_REALTIME, &tp);
 
-  char *base = sessions_base_dir(state_dir, workspace);
+  char *base = sessions_base_dir(data_dir, workspace);
 
   char epoch[64];
   snprintf(epoch, sizeof(epoch), "%ld.%05ld",

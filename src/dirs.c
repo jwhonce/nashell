@@ -67,8 +67,6 @@ nash_dirs_t *nash_dirs_resolve(const char *data_dir_override) {
   if (data_dir_override && data_dir_override[0]) {
     d->config_dir = xstrdup(data_dir_override);
     d->data_dir = d->config_dir;
-    d->state_dir = d->config_dir;
-    d->cache_dir = d->config_dir;
     d->xdg_mode = 0;
     mkdir_p(data_dir_override, 0755);
     return d;
@@ -106,19 +104,24 @@ nash_dirs_t *nash_dirs_resolve(const char *data_dir_override) {
     /* Legacy: all dirs point to ~/.nash */
     d->config_dir = xstrdup(legacy_dir);
     d->data_dir = d->config_dir;
-    d->state_dir = d->config_dir;
-    d->cache_dir = d->config_dir;
   } else {
     d->config_dir = xdg_dir("XDG_CONFIG_HOME", ".config", home);
     d->data_dir = xdg_dir("XDG_DATA_HOME", ".local/share", home);
-    d->state_dir = xdg_dir("XDG_STATE_HOME", ".local/state", home);
-    d->cache_dir = xdg_dir("XDG_CACHE_HOME", ".cache", home);
   }
 
   mkdir_p(d->config_dir, 0755);
   mkdir_p(d->data_dir, 0755);
-  mkdir_p(d->state_dir, 0755);
-  mkdir_p(d->cache_dir, 0755);
+
+  if (d->xdg_mode && dir_exists(legacy_dir))
+    fprintf(stderr,
+            "[warn] Legacy directory %s exists but nash is using XDG layout:\n"
+            "  config: %s\n"
+            "  data:   %s\n"
+            "[warn] Data in %s will NOT be used. To migrate:\n"
+            "  mv %s/* %s/\n"
+            "  rmdir %s\n",
+            legacy_dir, d->config_dir, d->data_dir,
+            legacy_dir, legacy_dir, d->data_dir, legacy_dir);
 
   return d;
 }
@@ -127,8 +130,6 @@ void nash_dirs_free(nash_dirs_t *dirs) {
   if (!dirs) return;
   char *base = dirs->config_dir;
   if (dirs->data_dir != base) free(dirs->data_dir);
-  if (dirs->state_dir != base) free(dirs->state_dir);
-  if (dirs->cache_dir != base) free(dirs->cache_dir);
   free(base);
   free(dirs);
 }

@@ -427,14 +427,14 @@ char *playbook_expand(const playbook_t *pb, const char *tmpl,
   if (dirs && pb->name) {
     char sp_path[NASH_PATH_MAX];
     snprintf(sp_path, sizeof(sp_path), "%s/playbooks/.state/%s/scratchpad.md",
-             dirs->state_dir, pb->name);
+             dirs->data_dir, pb->name);
     prev_scratch_text = slurp_file(sp_path, NULL);
   }
 
   const char *d_config = dirs ? dirs->config_dir : "";
   const char *d_data = dirs ? dirs->data_dir : "";
-  const char *d_state = dirs ? dirs->state_dir : "";
-  const char *d_cache = dirs ? dirs->cache_dir : "";
+  const char *d_state = d_data;
+  const char *d_cache = d_data;
 
   struct {
     const char *key;
@@ -838,14 +838,14 @@ void *playbook_worker(void *arg) {
   /* Change 5: Load persisted scratchpad from previous runs */
   char state_dir[NASH_PATH_MAX];
   snprintf(state_dir, sizeof(state_dir), "%s/playbooks/.state/%s",
-           pa->dirs->state_dir, pb->name);
+           pa->dirs->data_dir, pb->name);
   scratchpad_load(&shared_scratch, state_dir);
 
   char *prev_result = NULL;
   char *shared_session_dir = NULL;
 
   if (pb->session_mode == PB_SESSION_SHARED) {
-    shared_session_dir = create_session_dir(pa->dirs->state_dir, pa->workspace_override ? pa->workspace_override : pa->cfg->workspace);
+    shared_session_dir = create_session_dir(pa->dirs->data_dir, pa->workspace_override ? pa->workspace_override : pa->cfg->workspace);
   }
 
   int playbook_ok = 1;
@@ -878,7 +878,7 @@ void *playbook_worker(void *arg) {
 
   /* ── Run log: append-only JSONL tracking orchestration ── */
   char runs_dir[NASH_PATH_MAX];
-  snprintf(runs_dir, sizeof(runs_dir), "%s/runs", pa->dirs->state_dir);
+  snprintf(runs_dir, sizeof(runs_dir), "%s/runs", pa->dirs->data_dir);
   mkdir(runs_dir, 0755);
 
   struct timespec run_tp;
@@ -980,7 +980,7 @@ void *playbook_worker(void *arg) {
       /* Create session */
       char *pass_dir;
       if (pb->session_mode == PB_SESSION_PER_PASS) {
-        pass_dir = create_session_dir(pa->dirs->state_dir, pa->workspace_override ? pa->workspace_override : pa->cfg->workspace);
+        pass_dir = create_session_dir(pa->dirs->data_dir, pa->workspace_override ? pa->workspace_override : pa->cfg->workspace);
       } else {
         pass_dir = xstrdup(shared_session_dir);
       }
@@ -1432,7 +1432,7 @@ void *playbook_worker(void *arg) {
     /* Create state directory (mkdir -p equivalent) */
     char state_parent[NASH_PATH_MAX];
     snprintf(state_parent, sizeof(state_parent), "%s/playbooks/.state",
-             pa->dirs->state_dir);
+             pa->dirs->data_dir);
     mkdir(state_parent, 0755);
     mkdir(state_dir, 0755);
     scratchpad_save(&shared_scratch, state_dir);

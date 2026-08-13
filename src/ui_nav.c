@@ -699,7 +699,7 @@ void ui_state_search(ui_state_t *ui, const char *query) {
   }
 
   /* Build sessions directory path */
-  const char *state_dir = ui->dirs ? ui->dirs->state_dir : NULL;
+  const char *state_dir = ui->dirs ? ui->dirs->data_dir : NULL;
   if (!state_dir) {
     /* Derive from session_dir: .../sessions/XXX → parent
      * NB: static buffer — not thread-safe. Acceptable because

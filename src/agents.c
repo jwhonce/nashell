@@ -1236,11 +1236,11 @@ int agent_execute(agent_queue_t *q, const nash_dirs_t *dirs,
     str_replace(&a->last_status, status);
     a->next_due = agent_next_occurrence(&a->schedule, a->last_run);
 
-    agent_history_append(dirs->state_dir, a, dur, status, NULL);
+    agent_history_append(dirs->data_dir, a, dur, status, NULL);
 
     /* Symlink latest.md -> session's result.md for `/agent result` */
     if (pargs.last_session_dir)
-      agent_save_result(dirs->state_dir, a->id, pargs.last_session_dir);
+      agent_save_result(dirs->data_dir, a->id, pargs.last_session_dir);
 
     /* Route result through mailbox so bridge threads deliver it.
          * Confidential agents suppress bridge delivery entirely. */
@@ -1307,14 +1307,14 @@ int agent_run_due(const nash_dirs_t *dirs, store_t *shared_store, config_t *cfg,
     fprintf(stderr, "[agent] error: scan failed\n");
     return -1;
   }
-  agent_queue_load(q, dirs->state_dir);
+  agent_queue_load(q, dirs->data_dir);
   agent_queue_schedule(q, time(NULL));
 
   int n_fail = agent_execute(q, dirs, shared_store, cfg,
                              provider, server_model,
                              agent_id, arguments,
                              shutdown_flag, mailbox_dir);
-  agent_queue_save(q, dirs->state_dir);
+  agent_queue_save(q, dirs->data_dir);
   agent_queue_free(q);
   return n_fail;
 }

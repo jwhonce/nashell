@@ -56,14 +56,14 @@ struct cJSON *slurp_json(const char *path);
 int mkdir_p(const char *path, mode_t mode);
 
 /* Create session directory under the appropriate sessions base:
- *   workspace set: <state_dir>/workspaces/<workspace>/sessions/<epoch.NNNNN>/
- *   workspace NULL: <state_dir>/sessions/<epoch.NNNNN>/
+ *   workspace set: <data_dir>/workspaces/<workspace>/sessions/<epoch.NNNNN>/
+ *   workspace NULL: <data_dir>/sessions/<epoch.NNNNN>/
  * Returns strdup'd path. Caller must free. */
-char *create_session_dir(const char *state_dir, const char *workspace);
+char *create_session_dir(const char *data_dir, const char *workspace);
 
 /* Return the sessions base directory for a workspace (or global).
  * Creates the directory if it doesn't exist. Returns strdup'd path. */
-char *sessions_base_dir(const char *state_dir, const char *workspace);
+char *sessions_base_dir(const char *data_dir, const char *workspace);
 
 /* Acquire an exclusive flock on <session_dir>/.lock.
  * Returns the lock fd (>= 0) on success, -1 on failure.

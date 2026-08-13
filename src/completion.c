@@ -108,7 +108,7 @@ static int provide_runs(const nash_dirs_t *dirs, const char *prefix,
                         int prefix_len, char ***arr, int *count, int *cap) {
   if (!dirs) return 0;
   char rdir[NASH_PATH_MAX];
-  snprintf(rdir, sizeof(rdir), "%s/runs", dirs->state_dir);
+  snprintf(rdir, sizeof(rdir), "%s/runs", dirs->data_dir);
   DIR *d = opendir(rdir);
   if (!d) return 0;
   int added = 0;
