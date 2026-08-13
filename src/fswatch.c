@@ -98,10 +98,15 @@ int fswatch_add(fswatch_t *w, const char *dir_path) {
 int fswatch_wait(fswatch_t *w, int timeout_ms) {
   if (!w) return -1;
 
-  /* Polling fallback: sleep then tell caller to scan */
+  /* Polling fallback: sleep in 1-second chunks then tell caller to scan.
+   * Caps each usleep to avoid useconds_t overflow on large timeouts. */
   if (w->fallback) {
-    if (timeout_ms > 0)
-      usleep((useconds_t)timeout_ms * 1000);
+    int remaining = timeout_ms;
+    while (remaining > 0) {
+      int chunk = remaining > 1000 ? 1000 : remaining;
+      usleep((useconds_t)chunk * 1000);
+      remaining -= chunk;
+    }
     return 1;
   }
 

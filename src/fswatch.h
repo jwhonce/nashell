@@ -17,7 +17,8 @@ typedef struct fswatch fswatch_t;
 fswatch_t *fswatch_init(void);
 
 /* Watch a directory for file creation / move-in events.
- * Returns 0 on success, -1 on error. */
+ * Returns 0 on success (including when the backend fails and the watcher
+ * transparently degrades to polling mode), -1 on invalid arguments. */
 int fswatch_add(fswatch_t *w, const char *dir_path);
 
 /* Block until the watched directory changes or timeout expires.

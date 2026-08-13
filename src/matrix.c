@@ -13,8 +13,6 @@
  *   watching, using a short sync timeout to multiplex both.
  */
 
-/* memset_s requires __STDC_WANT_LIB_EXT1__ before any standard header;
- * used by the explicit_bzero shim below on macOS. */
 #if defined(__APPLE__)
 #define __STDC_WANT_LIB_EXT1__ 1
 #endif
@@ -32,7 +30,12 @@
 #include <strings.h> /* strcasecmp */
 #if defined(__APPLE__)
 static inline void explicit_bzero(void *buf, size_t len) {
+#if defined(__STDC_LIB_EXT1__)
   memset_s(buf, len, 0, len);
+#else
+  memset(buf, 0, len);
+  __asm__ __volatile__("" : : "r"(buf) : "memory");
+#endif
 }
 #endif
 #include <unistd.h>

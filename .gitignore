@@ -7,6 +7,7 @@ libnash.so*
 libnash*.dylib
 tests/*.so
 tests/*.dylib
+*.dSYM/
 tests/test_tool_plugin
 tests/test_tool_plugin_dlopen
 cscope.out

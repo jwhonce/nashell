@@ -261,7 +261,7 @@ test: $(TEST_BIN)
 clean:
 	rm -f $(OBJ) $(BIN) $(LIB_REAL) $(LIB_SONAME) $(LIB_LINKER) $(TEST_BIN) $(SAMPLE_PLUGINS)
 	rm -f libnash.so* libnash*.dylib
-	rm -rf tests/plugin_dir
+	rm -rf tests/plugin_dir tests/*.dSYM
 
 # Source tarball for RPM builds (matches spec Source0: nash-VERSION.tar.zst)
 dist:
